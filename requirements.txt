@@ -1,0 +1,19 @@
+﻿# 本文件带 UTF-8 BOM，请不要存成「无 BOM」：旧版 pip（某些 Windows 环境）在中文 Windows 上
+# 按 locale 的 GBK 解码 requirements，无 BOM 时遇到下面的中文注释直接 UnicodeDecodeError，
+# 整个安装失败（在中文 Windows 上实测踩到）。较新的 pip 能猜对编码，所以不一定复现。
+#
+# Mozunitor 应用层依赖。后端（monitor_server.py）仍然只用标准库，
+# 这三个包只服务于「托盘常驻 + 内嵌 WebView2 窗口」这一个入口 app.py。
+#
+# 版本是 2026-10-12 在 Python 3.13 上实测通过的组合（探针 P1–P4）；
+# Python 3.11 上，pywebview 依赖的 pythonnet 提供 cp311 wheel，同样可装。
+#
+# 装法：python -m pip install -r requirements.txt
+#
+# pywebview 在 Windows 上走 EdgeChromium 后端，需要机器上已有 WebView2 Runtime
+# （Win11 随 Edge 自带）。
+pywebview==6.2.1
+pystray==0.19.5
+# pillow 给区间而不是锁版本：本机已有的 term-image 要求 pillow<11，这在 pillow 12.1.0
+# 时就已经不满足（与本次改动无关），锁死具体版本只会让两端来回升降级。
+pillow>=12.1

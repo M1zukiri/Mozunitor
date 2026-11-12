@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mozunitor · 常驻服务监控</title>
+<link rel="stylesheet" href="/static/theme.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="statusbar" id="statusbar">
+  <span class="brand-mark" aria-hidden="true">MZ<span class="caret">_</span></span>
+  <span class="status-node" id="status-node">—</span>
+  <div class="status-facts">
+    <span class="stat" id="stat-core" data-tone="muted">核心异常 —</span>
+    <span class="stat" id="stat-normal" data-tone="muted">常驻异常 —</span>
+    <span class="stat" id="stat-peers" data-tone="muted">对端 —</span>
+  </div>
+  <span class="status-stamp" id="stamp">—</span>
+  <button id="refresh" class="btn btn-sm" type="button">刷新</button>
+  <button id="open-settings" class="btn btn-sm" type="button">设置</button>
+</header>
+
+<div class="warnings" id="warnings"></div>
+
+<section class="pinned hidden" id="pinned">
+  <div class="pinned-head"><span>置顶</span><span class="count" id="pinned-count"></span></div>
+  <div class="pinned-body" id="pinned-body"></div>
+</section>
+
+<main class="workspace workspace--dash">
+  <div class="kpi-row" id="kpi-row">
+    <section class="kpi"><span class="kpi-label">核心异常</span><span class="kpi-value">—</span><span class="kpi-foot">载入中</span></section>
+    <section class="kpi"><span class="kpi-label">常驻异常</span><span class="kpi-value">—</span><span class="kpi-foot">载入中</span></section>
+    <section class="kpi"><span class="kpi-label">对端节点</span><span class="kpi-value">—</span><span class="kpi-foot">载入中</span></section>
+    <section class="kpi"><span class="kpi-label">保活干预</span><span class="kpi-value">—</span><span class="kpi-foot">载入中</span></section>
+  </div>
+
+  <section class="panel panel-board">
+    <h2 class="panel-title">服务矩阵 <span class="count" id="board-count">—</span></h2>
+    <div class="board" id="board"><div class="empty">载入中…</div></div>
+  </section>
+
+  <aside class="panel side" id="side">
+    <div class="side-head panel-title">
+      <h2 id="side-name">服务详情</h2>
+      <span id="side-sub" class="side-sub">从左侧选一个服务</span>
+      <button id="side-close" class="btn side-close" type="button">关闭</button>
+    </div>
+    <div id="side-body" class="detail hidden"></div>
+    <div id="side-empty" class="side-empty">
+      <p>从左侧服务矩阵选一项，查看指标、操作、参数与动作历史。</p>
+      <dl class="tier-legend">
+        <div><dt>核心</dt><dd>基础设施与远程通道：异常红色横幅并自动展开</dd></div>
+        <div><dt>常驻</dt><dd>长期运行的服务：异常只给组头计数</dd></div>
+        <div><dt>按需</dt><dd>按需拉起：不统计在线，默认折叠</dd></div>
+      </dl>
+    </div>
+  </aside>
+</main>
+
+<div id="settings" class="modal settings hidden">
+  <div class="settings-box modal-box" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="modal-head">
+      <h2 id="settings-title">Mozunitor 设置</h2>
+      <button id="settings-close" class="modal-close" type="button" aria-label="关闭">×</button>
+    </div>
+    <div id="settings-body" class="modal-body"></div>
+  </div>
+</div>
+
+<div id="gate" class="modal hidden">
+  <form class="gate-card modal-box" id="gate-form">
+    <div class="modal-head">
+      <h2 id="gate-title">需要访问凭据</h2>
+    </div>
+    <div class="modal-body">
+      <p id="gate-desc">本面板绑在局域网地址上。填用户名即可查看状态；再填密码才能执行重启、终止这类控制操作。</p>
+      <label class="field">
+        <span class="field-label">用户名</span>
+        <input id="gate-user" type="text" autocomplete="username"
+               autocapitalize="off" spellcheck="false" placeholder="用户名">
+      </label>
+      <label class="field">
+        <span class="field-label">密码</span>
+        <input id="gate-pass" type="password" autocomplete="current-password"
+               autocapitalize="off" spellcheck="false" placeholder="密码（留空则只读）">
+      </label>
+      <p id="gate-err" class="gate-err" role="alert"></p>
+      <p class="hint" id="gate-hint">凭据存在服务端 <code>.state/credentials.json</code>，
+        只能在运行本面板的这台机器上修改。</p>
+    </div>
+    <div class="modal-foot gate-foot">
+      <button id="gate-later" type="button" class="btn hidden">稍后再说</button>
+      <button id="gate-go" type="submit" class="btn btn-primary">进入</button>
+    </div>
+  </form>
+</div>
+
+<div id="confirm" class="modal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-head">
+      <h2 id="confirm-title">确认操作</h2>
+      <button id="confirm-x" class="modal-close" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-confirm" id="confirm-msg"></p>
+      <div class="rule rule--warning" id="confirm-rule">
+        <div class="rule-top">
+          <span class="badge badge--warning" id="confirm-badge">后果</span>
+          <span class="rule-code" id="confirm-code">ACTION</span>
+        </div>
+        <p class="rule-msg" id="confirm-detail"></p>
+      </div>
+      <p class="modal-step">执行后不可撤销</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="confirm-no" type="button">取消</button>
+      <button class="btn btn-danger" id="confirm-yes" type="button">确认</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" data-show="false"></div>
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

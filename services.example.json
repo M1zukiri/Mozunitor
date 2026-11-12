@@ -1,0 +1,115 @@
+{
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 8090
+  },
+  "node": {
+    "id": "local-node",
+    "name": "本机"
+  },
+  "peers": {
+    "list": [],
+    "discover": {
+      "tailscale": false,
+      "every_s": 60
+    }
+  },
+  "access": {
+    "tokens_file": ".state/access-tokens.json"
+  },
+  "forwards": {
+    "bind": "127.0.0.1",
+    "ports": []
+  },
+  "intervals": {
+    "probe_local_ms": 3000,
+    "sample_local_ms": 8000,
+    "sample_remote_ms": 30000,
+    "peer_poll_ms": 5000,
+    "keepalive_ms": 5000
+  },
+  "ui": {
+    "card": {
+      "role": false,
+      "detail": true,
+      "metrics": false,
+      "deps": false,
+      "note": false,
+      "warn": true,
+      "badges": true,
+      "keepalive": true
+    },
+    "collapse": {
+      "core": "auto",
+      "normal": "collapsed",
+      "optional": "collapsed"
+    },
+    "mobile_hide_optional": true
+  },
+  "relay": {
+    "enabled": false
+  },
+  "groups": [
+    {
+      "id": "local",
+      "title": "本机服务",
+      "hint": "运行在本机的常驻服务"
+    },
+    {
+      "id": "optional",
+      "title": "按需",
+      "hint": "不运行是常态，不计入在线统计",
+      "ondemand": true
+    }
+  ],
+  "services": [
+    {
+      "id": "panel",
+      "name": "Mozunitor 面板",
+      "group": "local",
+      "tier": "core",
+      "role": "正在运行的这个面板",
+      "probe": {
+        "kind": "tcp",
+        "host": "127.0.0.1",
+        "port": 8090
+      },
+      "restart": {
+        "kind": "none",
+        "why": "从外部重启面板"
+      }
+    },
+    {
+      "id": "demo-web",
+      "name": "示例 Web 服务",
+      "group": "local",
+      "tier": "normal",
+      "role": "把 probe.url 改成你自己的服务地址即可监控",
+      "probe": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8080/",
+        "ok": [
+          200
+        ]
+      },
+      "stop": {
+        "kill_port": 8080
+      },
+      "restart": {
+        "kind": "none",
+        "why": "示例没有配置启动命令"
+      }
+    },
+    {
+      "id": "demo-launch",
+      "name": "示例按需工具",
+      "group": "optional",
+      "tier": "optional",
+      "role": "按需拉起的桌面工具样例",
+      "probe": {
+        "kind": "process",
+        "name": "notepad.exe"
+      }
+    }
+  ]
+}
