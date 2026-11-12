@@ -14,6 +14,7 @@ from __future__ import annotations
 import http.cookiejar
 import json
 import os
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PORT = 8123
+PORT_NET = 8124
 BASE = f"http://127.0.0.1:{PORT}"
 SETUP_CODE = "TESTSETUP"
 LAUNCH = "TESTLAUNCH"
@@ -60,17 +62,22 @@ def build_config(path: Path) -> None:
 
 
 class Client:
-    def __init__(self):
+    def __init__(self, base: str | None = None, ctx=None):
+        self.base = base or BASE
         self.jar = http.cookiejar.CookieJar()
-        self.opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(self.jar))
+        handlers = [urllib.request.ProxyHandler({}),
+                    urllib.request.HTTPCookieProcessor(self.jar)]
+        if ctx is not None:
+            handlers.insert(0, urllib.request.HTTPSHandler(context=ctx))
+        self.opener = urllib.request.build_opener(*handlers)
 
     def req(self, method: str, path: str, *, body=None, headers=None):
         data = json.dumps(body).encode() if body is not None else None
         hdrs = dict(headers or {})
         if data is not None:
             hdrs.setdefault("Content-Type", "application/json")
-        req = urllib.request.Request(BASE + path, data=data, method=method, headers=hdrs)
+        req = urllib.request.Request(self.base + path, data=data, method=method,
+                                     headers=hdrs)
         try:
             with self.opener.open(req, timeout=15) as resp:
                 return resp.status, dict(resp.headers), resp.read()
@@ -81,7 +88,7 @@ class Client:
 
 
 def main() -> int:
-    print("=== security http selftest (1.0.2 check) ===")
+    print("=== security http selftest (1.0.3 check) ===")
     tmp = Path(tempfile.mkdtemp(prefix="mozu-p2-"))
     cfg = tmp / "services.json"
     state = tmp / "state"
@@ -93,6 +100,7 @@ def main() -> int:
         "MOZU_SETUP_CODE": SETUP_CODE,
         "MOZU_LAUNCH_TOKEN": LAUNCH,
         "MOZU_ACTION_LOG": str(tmp / "actions.jsonl"),
+        "MOZU_NET_CATEGORY": "Private",
         "PYTHONIOENCODING": "utf-8",
     })
     proc = subprocess.Popen([sys.executable, "-u", str(ROOT / "monitor_server.py")],
@@ -158,7 +166,7 @@ def main() -> int:
         fresh = Client()
         code, _, body = fresh.req("POST", "/api/session/launch", body={"token": LAUNCH})
         d = json.loads(body)
-        check("launch：launch token 换会话", code == 200 and d.get("scope") == "write", str(code))
+        check("launch：launch token 换 admin 会话", code == 200 and d.get("scope") == "admin", str(code))
 
         local_tok = (state / "local-token").read_text(encoding="utf-8").strip()
         local_client = Client()
@@ -169,6 +177,58 @@ def main() -> int:
         good = Client()
         code, _, body = good.req("POST", "/api/session/login", body={"password": PASSWORD})
         check("登录：正确口令 200", code == 200, str(code))
+
+        # ---- 网络入口：HTTPS + TLS 指纹 + CIDR 白名单 ----
+        admin = Client()
+        tok = (state / "local-token").read_text(encoding="utf-8").strip()
+        net_payload = {"enabled": True, "mode": "lan", "bind": "127.0.0.1",
+                       "port": PORT_NET, "allowed_cidrs": ["127.0.0.0/8"]}
+        code, _, body = admin.req("POST", "/api/security/network", body=net_payload,
+                                  headers={"X-Mozunitor-Local-Token": tok})
+        d = json.loads(body)
+        check("网络：开启 HTTPS 入口", code == 200 and (d.get("network") or {}).get("enabled"),
+              str(code))
+        fp = (d.get("network") or {}).get("tls_fingerprint") or ""
+        check("网络：返回证书指纹", len(fp) == 64)
+
+        code, _, _ = Client(f"http://127.0.0.1:{PORT_NET}").req("GET", "/api/state")
+        check("网络：明文 HTTP 访问 TLS 端口失败", code == -1, str(code))
+
+        net = Client(f"https://127.0.0.1:{PORT_NET}", ssl._create_unverified_context())
+        code, _, _ = net.req("GET", "/api/setup/status")
+        check("网络：本地专属接口 403", code == 403, str(code))
+        code, hdr, body = net.req("POST", "/api/session/login", body={"password": PASSWORD})
+        check("网络：HTTPS 登录 200", code == 200, str(code))
+        check("网络：Cookie 带 Secure", "Secure" in (hdr.get("Set-Cookie") or ""))
+        code, _, _ = net.req("GET", "/api/state")
+        check("网络：登录后可读状态", code == 200, str(code))
+        code, _, _ = net.req("GET", "/api/state", headers={"Host": "evil.example"})
+        check("网络：伪造 Host 403", code == 403, str(code))
+
+        code, _, body = admin.req("GET", "/api/security",
+                                  headers={"X-Mozunitor-Local-Token": tok})
+        d = json.loads(body)
+        check("网络：安全页返回网络状态",
+              code == 200 and (d.get("network") or {}).get("enabled"), str(code))
+        cfg_saved = json.loads(cfg.read_text(encoding="utf-8"))
+        check("网络：配置写回 listen.network",
+              bool(cfg_saved["listen"]["network"]["enabled"]))
+        check("网络：配置写回绑定地址",
+              cfg_saved["listen"]["network"]["bind"] == "127.0.0.1")
+
+        code, _, _ = admin.req("POST", "/api/security/network",
+                               body={"enabled": True, "mode": "lan", "bind": "127.0.0.1",
+                                     "port": PORT_NET, "allowed_cidrs": ["10.0.0.0/8"]},
+                               headers={"X-Mozunitor-Local-Token": tok})
+        check("网络：改白名单 200", code == 200, str(code))
+        code, _, _ = net.req("GET", "/api/state")
+        check("网络：白名单外来源 403", code == 403, str(code))
+        admin.req("POST", "/api/security/network",
+                  body={"enabled": True, "mode": "lan", "bind": "127.0.0.1",
+                        "port": PORT_NET, "allowed_cidrs": ["127.0.0.0/8"]},
+                  headers={"X-Mozunitor-Local-Token": tok})
+        code, _, _ = net.req("GET", "/api/state")
+        check("网络：恢复白名单后可读", code == 200, str(code))
 
         bad = Client()
         for _ in range(5):

@@ -11,6 +11,8 @@ import {
 
 const $ = (s) => document.querySelector(s);
 let PANEL = null;
+let SEC = null;
+let SEC_ERR = '';
 
 const INTERVALS = [
   ["probe_local_ms", "探测间隔"],
@@ -120,6 +122,114 @@ function panelNumbers() {
     <button type="button" data-save-panel="keepalive">保存保活策略</button>`;
 }
 
+function fmtTs(ts) {
+  const n = Number(ts);
+  if (!n) return '—';
+  return new Date(n * 1000).toLocaleString('zh-CN', { hour12: false });
+}
+
+function securitySection() {
+  if (!SEC) {
+    return `<div class="empty">安全状态读取失败${SEC_ERR ? '：' + esc(SEC_ERR) : ''}`
+      + '（需要管理员口令登录；本机脚本可用本地 token）</div>';
+  }
+  const net = SEC.network || {};
+  const fp = net.tls_fingerprint_pretty || '未生成（开启网络入口后生成）';
+  const cidrs = (net.allowed_cidrs || []).join(', ');
+  const sessions = (SEC.sessions || []).map((s) =>
+    `<div class="pref-row"><span class="pref-name">${esc(s.listener)} · ${esc(s.scope)}`
+    + ` …${esc(s.sid || '')}</span>`
+    + `<span class="pref-note">${esc(s.ip || '')} · ${esc(fmtTs(s.last_seen))}</span></div>`)
+    .join('');
+  return `
+    <h3 class="sec">网络入口（HTTPS）</h3>
+    <p class="hint">默认只监听回环。开启后按 CIDR 白名单放行局域网/Tailnet；当前网络为「公用网络」时拒绝开启。</p>
+    <div class="pref-list">
+      <label class="pref-row"><span class="pref-name">启用网络入口</span>
+        <input type="checkbox" data-net="enabled"${net.enabled ? ' checked' : ''}></label>
+      <label class="pref-row"><span class="pref-name">模式</span>
+        <select data-net="mode">
+          <option value="lan"${net.mode === 'lan' ? ' selected' : ''}>局域网</option>
+          <option value="tailnet"${net.mode === 'tailnet' ? ' selected' : ''}>Tailnet</option>
+        </select></label>
+      <label class="pref-row"><span class="pref-name">绑定地址（留空自动选择）</span>
+        <input type="text" data-net="bind" value="${esc(net.bind || '')}" placeholder="192.168.1.10"></label>
+      <label class="pref-row"><span class="pref-name">端口</span>
+        <input type="number" min="1024" max="65535" data-net="port" value="${esc(net.port || 8443)}"></label>
+      <label class="pref-row"><span class="pref-name">允许来源 CIDR（逗号分隔）</span>
+        <input type="text" class="wide" data-net="cidrs" value="${esc(cidrs)}"></label>
+    </div>
+    <p class="hint">证书指纹 SHA256：<code>${esc(fp)}</code></p>
+    <button type="button" data-save-network="1">保存网络设置</button>
+    <button class="ghost" type="button" data-rotate-cert="1">轮换证书</button>
+    <h3 class="sec">活动会话</h3>
+    <div class="pref-list">${sessions || '<div class="empty">没有活动会话</div>'}</div>
+    <h3 class="sec">管理员口令</h3>
+    <div class="pref-list">
+      <label class="pref-row"><span class="pref-name">原口令</span>
+        <input type="password" data-pw="old" autocomplete="current-password"></label>
+      <label class="pref-row"><span class="pref-name">新口令（至少 8 位）</span>
+        <input type="password" data-pw="new" autocomplete="new-password"></label>
+    </div>
+    <button type="button" data-save-password="1">修改口令</button>`;
+}
+
+function netValues(extra) {
+  const q = (sel) => document.querySelector(sel);
+  const payload = {
+    enabled: !!(q('[data-net="enabled"]') || {}).checked,
+    mode: ((q('[data-net="mode"]') || {}).value) || 'lan',
+    bind: (((q('[data-net="bind"]') || {}).value) || '').trim(),
+    port: Number(((q('[data-net="port"]') || {}).value) || 8443),
+    allowed_cidrs: (((q('[data-net="cidrs"]') || {}).value) || '')
+      .split(',').map((x) => x.trim()).filter(Boolean),
+  };
+  return Object.assign(payload, extra || {});
+}
+
+async function saveNetwork(payload) {
+  try {
+    const r = await authFetch('/api/security/network', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    SEC = Object.assign({}, SEC, { network: d.network || SEC.network });
+    renderSettings();
+    toast(payload.rotate_cert ? '证书已轮换，请重新配对手机端' : '网络设置已保存', 'ok');
+  } catch (e) {
+    toast(`网络设置保存失败：${e}`, 'bad');
+  }
+}
+
+async function savePassword() {
+  const q = (sel) => document.querySelector(sel);
+  try {
+    const r = await authFetch('/api/security/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        old: ((q('[data-pw="old"]') || {}).value) || '',
+        new: ((q('[data-pw="new"]') || {}).value) || '',
+      }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    toast('口令已修改，请重新登录', 'ok');
+    setTimeout(() => location.reload(), 800);
+  } catch (e) {
+    toast(`修改口令失败：${e}`, 'bad');
+  }
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-save-network]')) { saveNetwork(netValues()); return; }
+  if (e.target.closest('[data-rotate-cert]')) { saveNetwork(netValues({ rotate_cert: true })); return; }
+  if (e.target.closest('[data-save-password]')) savePassword();
+});
+
 export function renderSettings() {
   const body = $('#settings-body');
   if (!body || !DATA) return;
@@ -147,6 +257,10 @@ export function renderSettings() {
       ${panelNumbers() || (PANEL
         ? '<div class="empty">当前面板没有可改的采样设置</div>'
         : '<div class="empty">设置快照载入中…</div>')}
+    </section>
+    <section class="settings-sec">
+      <h2>安全</h2>
+      ${securitySection()}
     </section>`;
 }
 
@@ -165,6 +279,16 @@ export async function openSettings() {
   } catch (e) {
     PANEL = null;
     toast(`设置快照读取失败：${e}`, 'bad');
+  }
+  SEC = null;
+  SEC_ERR = '';
+  try {
+    const sr = await authFetch('/api/security');
+    const sd = await sr.json().catch(() => ({}));
+    if (sr.ok) SEC = sd;
+    else SEC_ERR = sd.error || ('HTTP ' + sr.status);
+  } catch (e) {
+    SEC_ERR = String(e);
   }
   renderSettings();
 }

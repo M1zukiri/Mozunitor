@@ -20,6 +20,7 @@ from .audit import AuditLog
 from .identity import LocalToken, NodeIdentity, harden_file, random_token
 from .passwords import hash_password, needs_rehash, verify_password
 from .ratelimit import AttemptLimiter
+from ..net.listeners import NetworkConfig, ip_in_cidrs
 from .sessions import Session, SessionStore
 
 ADMIN_USER = "admin"
@@ -51,6 +52,8 @@ class SecurityState:
     root: Path
     port: int = 8090
     net_host: str = "127.0.0.1"
+    net_port: int = 8443
+    network: NetworkConfig | None = None
     network_enabled: bool = False
     ttl_s: int = 1800
     max_age_s: int = 2592000
@@ -147,21 +150,21 @@ class SecurityState:
 
     # ---------------------------------------------------------------- 来源
     def allowed_hosts(self, loopback: bool) -> set[str]:
-        port = int(self.port)
         if loopback:
+            port = int(self.port)
             return {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
-        hosts = {f"{self.net_host}:{port}", f"localhost:{port}"}
+        port = int(self.net_port)
+        hosts = {f"localhost:{port}"}
+        net = self.network or NetworkConfig()
+        if net.bind:
+            hosts.add(f"{net.bind}:{port}")
         for ip in self._local_ips():
             hosts.add(f"{ip}:{port}")
         return hosts
 
-    def allowed_origins(self, loopback: bool, secure: bool = False) -> set[str]:
-        port = int(self.port)
-        scheme = "https" if secure else "http"
-        if loopback:
-            return {f"{scheme}://127.0.0.1:{port}", f"{scheme}://localhost:{port}",
-                    f"{scheme}://[::1]:{port}"}
-        return {f"{scheme}://{h}" for h in self.allowed_hosts(False)}
+    def allowed_origins(self, loopback: bool) -> set[str]:
+        scheme = "http" if loopback else "https"
+        return {f"{scheme}://{h}" for h in self.allowed_hosts(loopback)}
 
     def _local_ips(self) -> set[str]:
         out: set[str] = set()
@@ -228,6 +231,13 @@ class SecurityState:
         if path in authz.GONE_PATHS:
             return AuthResult(status=410, error="该接口已下线，请使用 /api/session 与 /api/security")
 
+        if not loopback:
+            net = self.network or NetworkConfig()
+            if not net.enabled:
+                return AuthResult(status=403, error="网络入口未开启")
+            if not ip_in_cidrs(client_ip, net.networks):
+                return AuthResult(status=403, error="来源地址不在允许的网络范围内")
+
         route = authz.find_route(method, path)
         if route is None:
             if authz.path_known(path):
@@ -292,7 +302,7 @@ class SecurityState:
             self._admin["password"] = hash_password(password)
             self._save_state()
         session, _ = self.sessions.create(
-            "write", listener="local" if loopback else "network", ua=ua, ip=client_ip)
+            "admin", listener="local" if loopback else "network", ua=ua, ip=client_ip)
         self.audit.write("login_ok", ip=client_ip, ua=ua, sid=session.sid[-8:])
         return session, self.cookie_header(session, secure=not loopback)
 
@@ -309,7 +319,7 @@ class SecurityState:
         self._admin = {"user": ADMIN_USER, "password": hash_password(password)}
         self._setup_done = True
         self._save_state()
-        session, _ = self.sessions.create("write", listener="local", ua=ua, ip=client_ip)
+        session, _ = self.sessions.create("admin", listener="local", ua=ua, ip=client_ip)
         self.audit.write("setup_ok", ip=client_ip)
         return session, self.cookie_header(session)
 
@@ -318,7 +328,7 @@ class SecurityState:
         if not token or not hmac.compare_digest(str(token), self.launch_token):
             self.audit.write("launch_failed", ip=client_ip)
             raise AuthError(403, "launch token 不正确")
-        session, _ = self.sessions.create("write", listener="local", ua=ua, ip=client_ip)
+        session, _ = self.sessions.create("admin", listener="local", ua=ua, ip=client_ip)
         self.audit.write("launch_ok", ip=client_ip, sid=session.sid[-8:])
         return session, self.cookie_header(session)
 
@@ -340,11 +350,19 @@ class SecurityState:
             self.audit.write("logout", sid=session.sid[-8:])
 
     # ---------------------------------------------------------------- 展示
+    def set_network(self, cfg: NetworkConfig) -> None:
+        with self._lock:
+            self.network = cfg
+            self.net_port = int(cfg.port)
+
     def snapshot(self) -> dict:
+        net = self.network or NetworkConfig()
         return {
             "setup_done": not self.needs_setup,
             "node": {"id": "", "name": ""},       # 由调用方填充
             "sessions": self.sessions.list(),
             "local_token_file": str(self.local_token.path),
             "identity_fingerprint": self.identity.fingerprint(),
+            "network": net.snapshot(),
+            "net_port": self.net_port,
         }

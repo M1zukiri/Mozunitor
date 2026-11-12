@@ -29,6 +29,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from mozunitor import tls as mtls
+from mozunitor.net.listeners import (NetworkConfig, NetworkConfigError, NetworkServer,
+                                     default_bind, ensure_allowed, serve_in_thread)
+from mozunitor.net.listeners import stop as stop_network_server
 from mozunitor.security.state import AuthError as SecurityAuthError
 from mozunitor.security.state import SecurityState
 from pathlib import Path
@@ -146,25 +150,48 @@ DISCOVER_TIMEOUT_S = 2.5
 
 # ---------------------------------------------------------------- 监听面
 # 1.1.0 起配置允许 `listen.local` / `listen.network`；旧配置只有 host/port，
-# 这里统一折算成本地 listener 的 host/port（网络 listener 在 P3 接入）。
-_LISTEN_CFG = CFG.get("listen") or {}
+# 这里折算成本地 listener；旧的「非回环 host」迁移成网络模式（强制 HTTPS）。
+_LISTEN_CFG = CFG.get("listen") if isinstance(CFG.get("listen"), dict) else {}
+_LEGACY_LISTEN = _LISTEN_CFG.get("local") is None
 _LOCAL_LISTEN = (_LISTEN_CFG.get("local")
                  if isinstance(_LISTEN_CFG.get("local"), dict) else _LISTEN_CFG)
 LOCAL_HOST = str(_LOCAL_LISTEN.get("host") or "127.0.0.1")
 LOCAL_PORT = int(_LOCAL_LISTEN.get("port") or 8090)
+MIGRATION_NOTE = ""
+if _LEGACY_LISTEN and LOCAL_HOST not in ("127.0.0.1", "localhost", "::1"):
+    _legacy_bind = "" if LOCAL_HOST in ("0.0.0.0", "::", "*") else LOCAL_HOST
+    try:
+        _legacy_bind = _legacy_bind or default_bind("lan")
+    except NetworkConfigError:
+        _legacy_bind = ""
+    LOCAL_HOST = "127.0.0.1"
+    NETWORK_CFG = NetworkConfig(enabled=True, mode="lan", bind=_legacy_bind,
+                                port=NetworkConfig().port)
+    MIGRATION_NOTE = ("原配置 listen.host 为非回环地址，已迁移为 HTTPS 网络入口；"
+                      "请按提示确认证书指纹")
+else:
+    try:
+        NETWORK_CFG = NetworkConfig.from_dict(
+            (_LISTEN_CFG.get("network") or {}) if not _LEGACY_LISTEN else {})
+    except NetworkConfigError as _exc:
+        print(f"[网络] listen.network 配置无效，按关闭处理：{_exc}")
+        NETWORK_CFG = NetworkConfig()
+NET_SERVER = None                     # 运行中的网络 listener（HTTPS）
+TLS_FINGERPRINT = ""                  # 自签证书指纹（网络入口未开启时为空）
 
 # 安全状态：管理员口令、会话、launch/local token、限流与审计。
 # 1.1.0 起 Handler 不再自己判“回环免鉴权”，一切经 SecurityState.authorize()。
 _SECURITY_CFG = CFG.get("security") or {}
 SECURITY = SecurityState(
-    ROOT, port=LOCAL_PORT, net_host=LOCAL_HOST,
+    ROOT, port=LOCAL_PORT, net_host=LOCAL_HOST, net_port=NETWORK_CFG.port,
+    network=NETWORK_CFG,
     ttl_s=int(_SECURITY_CFG.get("session_ttl_s", 1800)),
     max_age_s=int(_SECURITY_CFG.get("session_max_age_s", 2592000)),
     login_window_s=int(_SECURITY_CFG.get("login_window_s", 300)),
     login_max_failures=int(_SECURITY_CFG.get("login_max_failures", 5)),
     lockout_s=int(_SECURITY_CFG.get("lockout_s", 300)),
 )
-SERVER_VERSION = "Mozunitor/1.0.2"
+SERVER_VERSION = "Mozunitor/1.0.3"
 
 
 # 远端 Ollama 的模型状态：直接走 HTTP，不经 SSH。expires_at 是绝对时间戳、倒计时由前端算，
@@ -4510,6 +4537,52 @@ def lan_addresses() -> list[str]:
     return out
 
 
+def save_listen_config(cfg: NetworkConfig) -> None:
+    """把 listen 段写回 services.json（原子替换，保留其它字段）。"""
+    data = json.loads(CFG_PATH.read_text(encoding="utf-8"))
+    data["listen"] = {"local": {"host": LOCAL_HOST, "port": LOCAL_PORT},
+                      "network": cfg.snapshot()}
+    tmp = CFG_PATH.with_name(CFG_PATH.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, CFG_PATH)
+
+
+def start_network_listener(cfg: NetworkConfig, *, rotate_cert: bool = False) -> None:
+    global NET_SERVER, TLS_FINGERPRINT
+    if NET_SERVER is not None:
+        stop_network_listener()
+    ctx, fp, _cert = mtls.ensure(SECURITY.state_dir, [socket.gethostname()],
+                                 [cfg.bind], rotate=rotate_cert)
+    server = NetworkServer((cfg.bind, cfg.port), Handler, ctx)
+    NET_SERVER = server
+    TLS_FINGERPRINT = fp
+    serve_in_thread(server)
+
+
+def stop_network_listener() -> None:
+    global NET_SERVER
+    stop_network_server(NET_SERVER)
+    NET_SERVER = None
+
+
+def apply_network_config(cfg: NetworkConfig, *, persist: bool = True,
+                         rotate_cert: bool = False) -> NetworkConfig:
+    """校验并启停网络入口；persist 时把 listen 段写回配置。"""
+    global NETWORK_CFG, TLS_FINGERPRINT
+    if cfg.enabled:
+        cfg = ensure_allowed(cfg)
+    stop_network_listener()
+    if cfg.enabled:
+        start_network_listener(cfg, rotate_cert=rotate_cert)
+    else:
+        TLS_FINGERPRINT = ""
+    NETWORK_CFG = cfg
+    SECURITY.set_network(cfg)
+    if persist:
+        save_listen_config(cfg)
+    return cfg
+
+
 def print_access_hints(host: str, port: int) -> None:
     print(f"Mozunitor 已启动: http://127.0.0.1:{port}/")
     print("1.1.0 起回环也需要登录（不再有回环免鉴权）：")
@@ -4518,10 +4591,12 @@ def print_access_hints(host: str, port: int) -> None:
         print("  壳内通过 launch token 自动登录；也可用上面的 setup code 完成初始化")
     else:
         print("  用管理员口令登录；本机脚本可用 .state/local-token")
-    if remote_access():
-        print(f"已绑定 {host}（非回环）：需要先登录；网络模式与 TLS 在 P3 接入")
-        for ip in lan_addresses():
-            print(f"  http://{ip}:{port}/")
+    if NETWORK_CFG.enabled and NET_SERVER is not None:
+        print(f"网络入口（HTTPS）: https://{NETWORK_CFG.bind}:{NETWORK_CFG.port}/")
+        print(f"  证书指纹 SHA256: {mtls.format_fingerprint(TLS_FINGERPRINT)}")
+        print(f"  允许来源: {', '.join(NETWORK_CFG.allowed_cidrs)}")
+    if MIGRATION_NOTE:
+        print(f"  [迁移] {MIGRATION_NOTE}")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -4533,8 +4608,12 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     # -- 工具 ----------------------------------------------------------
+    def _listener_kind(self) -> str:
+        return getattr(self.server, "listener_kind", "local")
+
     def _is_loopback(self) -> bool:
-        return self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+        """本地管理面（loopback listener）的请求；网络入口一律按远端处理。"""
+        return self._listener_kind() == "local"
 
     def _token_from_req(self) -> str:
         """首次可用 ?token= 进来（方便做成书签/二维码），之后走 Cookie。"""
@@ -4715,6 +4794,32 @@ class Handler(BaseHTTPRequestHandler):
         self._session_cookie = SECURITY.clear_cookie_header()
         self._send(200, {"ok": True, "relogin": True})
 
+    def _handle_security_network(self, payload: dict) -> None:
+        try:
+            cfg = NetworkConfig.from_dict(payload)
+        except NetworkConfigError as exc:
+            self._send(400, {"error": str(exc)})
+            return
+        try:
+            cfg = apply_network_config(cfg, persist=True,
+                                       rotate_cert=bool(payload.get("rotate_cert")))
+        except NetworkConfigError as exc:
+            SECURITY.audit.write("network_config_failed", ip=self._client_ip(),
+                                 reason=str(exc))
+            self._send(400, {"error": str(exc)})
+            return
+        except OSError as exc:
+            SECURITY.audit.write("network_config_failed", ip=self._client_ip(),
+                                 reason=str(exc))
+            self._send(500, {"error": f"启动网络入口失败：{exc}"})
+            return
+        SECURITY.audit.write("network_config", ip=self._client_ip(), enabled=cfg.enabled,
+                             mode=cfg.mode, bind=cfg.bind, port=cfg.port,
+                             cidrs=",".join(cfg.allowed_cidrs))
+        self._send(200, {"ok": True, "network": dict(
+            NETWORK_CFG.snapshot(), tls_fingerprint=TLS_FINGERPRINT,
+            tls_fingerprint_pretty=mtls.format_fingerprint(TLS_FINGERPRINT))})
+
     def _send(self, code: int, body, ctype: str = "application/json; charset=utf-8",
               extra_headers: list | None = None) -> None:
         if isinstance(body, (dict, list)):
@@ -4789,7 +4894,10 @@ class Handler(BaseHTTPRequestHandler):
             snap = SECURITY.snapshot()
             snap["node"] = {"id": NODE_ID, "name": NODE_NAME}
             snap["version"] = SERVER_VERSION
-            snap["network"] = {"enabled": False, "mode": "lan", "bind": "", "port": 0}
+            snap["listener"] = self._listener_kind()
+            snap["network"] = dict(
+                NETWORK_CFG.snapshot(), tls_fingerprint=TLS_FINGERPRINT,
+                tls_fingerprint_pretty=mtls.format_fingerprint(TLS_FINGERPRINT))
             self._send(200, snap)
         elif path == "/api/devices":
             self._send(200, {"devices": []})
@@ -4846,9 +4954,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/security/password":
             self._handle_password_change(payload)
             return
-        if path in ("/api/security/network", "/api/pair/start", "/api/pair/complete",
-                    "/api/devices/revoke"):
-            self._send(501, {"error": "该能力在 P3/P4 阶段接入（安全重构进行中）"})
+        if path == "/api/security/network":
+            self._handle_security_network(payload)
+            return
+        if path in ("/api/pair/start", "/api/pair/complete", "/api/devices/revoke"):
+            self._send(501, {"error": "设备配对在 P4 阶段接入（安全重构进行中）"})
             return
 
         if path in ("/api/restart", "/api/stop"):
@@ -5129,6 +5239,12 @@ def main() -> int:
 
     open_proxy_listeners()
 
+    if NETWORK_CFG.enabled:
+        try:
+            apply_network_config(NETWORK_CFG, persist=False)
+        except (NetworkConfigError, OSError) as exc:
+            print(f"[网络] 网络入口启动失败，仅保留本机入口：{exc}")
+
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
     print_access_hints(host, port)
@@ -5136,6 +5252,8 @@ def main() -> int:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n已停止")
+    finally:
+        stop_network_listener()
     return 0
 
 

@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-11-13）
 
-- 版本 **1.0.2**（公开基线 1.0.0；安全重构 P2 检查点）。开发分支 `refactor/security`，按
+- 版本 **1.0.3**（公开基线 1.0.0；安全重构 P3 检查点）。开发分支 `refactor/security`，按
   `docs/SPEC-security-hardening.md` 执行；B 位目标 **1.1.0**。
 
 ## 进度记录
@@ -21,4 +21,12 @@
   旧 `?token=` / `/api/auth` / `/api/credentials` → 410；新增 `/api/setup/*`、`/api/session*`、
   `/api/security`、`/api/devices`；CSRF / Origin / Host / Content-Type 校验与安全响应头；壳经 URL
   片段注入 launch token。`tools/security_http_selftest.py` **21 项全 PASS**；Playwright 冒烟：
-  setup → 面板 → 刷新会话保持、无 JS 异常。网络 listener / TLS / 安全页仍待 P3。
+  setup → 面板 → 刷新会话保持、无 JS 异常。
+- P3（C 位 **1.0.3**）：网络 listener + 自签 TLS —— `mozunitor/tls.py`（ECDSA P-256、
+  SAN 覆盖主机名与绑定 IP、ACL 收紧、指纹）、`mozunitor/net/listeners.py`（模式/绑定/CIDR 校验、
+  Windows 网络类别判定、Public 拒绝开启、`NetworkServer`）；`SecurityState` 增加网络来源校验、
+  网络端口与 Host/Origin 适配；`/api/security` 返回网络状态与证书指纹，`POST /api/security/network`
+  实现开关/改绑定/CIDR/轮换证书并写回 `listen.network`；设置页新增「安全」分节（网络开关、模式、
+  绑定、CIDR、指纹、活动会话、改口令）；管理员口令登录签发 admin 会话。自检：unit **108 项**、
+  HTTP **35 项** 全 PASS；Playwright：设置页安全分节可见、开启 HTTPS 后指纹展示、非白名单来源 403、
+  配置写回验证通过。

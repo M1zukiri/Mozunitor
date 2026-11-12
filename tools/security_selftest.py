@@ -11,16 +11,20 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from mozunitor import tls as mtls  # noqa: E402
+from mozunitor.net import listeners  # noqa: E402
 from mozunitor.security import (audit, authz, csrf, identity, passwords,
                                 ratelimit, sessions)  # noqa: E402
 from mozunitor.security import state as security_state  # noqa: E402
@@ -133,7 +137,7 @@ class SecurityStateTests(unittest.TestCase):
             except security_state.AuthError as exc:
                 check("登录：失败 5 次后限流 429", exc.status == 429, str(exc.status))
             sess, _ = st.login("password123", client_ip="10.0.0.8")
-            check("登录：正确口令签发会话", sess.scope == "write")
+            check("登录：正确口令签发 admin 会话", sess.scope == "admin")
 
     def test_change_password_revokes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -147,7 +151,7 @@ class SecurityStateTests(unittest.TestCase):
                              client_ip="127.0.0.1", loopback=True)
             check("改密：旧会话全部失效", r.status == 401, str(r.status))
             sess2, _ = st.login("newpassword123", client_ip="127.0.0.1")
-            check("改密：新口令可登录", sess2.scope == "write")
+            check("改密：新口令可登录", sess2.scope == "admin")
 
 FAILS: list[str] = []
 
@@ -350,8 +354,115 @@ class IdentityTests(unittest.TestCase):
             check("本地 token：轮换后新值可用", store.verify(rotated))
 
 
+class NetConfigTests(unittest.TestCase):
+    def test_cidr_parse_and_match(self):
+        nets = listeners.parse_cidrs(["192.168.0.0/16", "127.0.0.0/8"])
+        check("网络：CIDR 解析", len(nets) == 2)
+        check("网络：白名单命中", listeners.ip_in_cidrs("127.0.0.1", nets))
+        check("网络：白名单外拒绝", not listeners.ip_in_cidrs("10.1.2.3", nets))
+        check("网络：非法 IP 拒绝", not listeners.ip_in_cidrs("not-an-ip", nets))
+        try:
+            listeners.parse_cidrs(["300.0.0.1/8"])
+            check("网络：非法 CIDR 报错", False)
+        except listeners.NetworkConfigError:
+            check("网络：非法 CIDR 报错", True)
+
+    def test_config_validation(self):
+        cfg = listeners.NetworkConfig.from_dict(
+            {"enabled": True, "mode": "lan", "bind": "192.168.1.10",
+             "port": 8443, "allowed_cidrs": ["192.168.0.0/16"]})
+        check("网络：配置解析", cfg.enabled and cfg.bind == "192.168.1.10")
+        for bad in ({"mode": "public"}, {"bind": "no-ip"}, {"port": 80},
+                    {"port": "x"}, {"allowed_cidrs": ["bad"]}):
+            try:
+                listeners.NetworkConfig.from_dict({"enabled": True, **bad})
+                check("网络：拒绝非法配置 " + json.dumps(bad, ensure_ascii=False), False)
+            except listeners.NetworkConfigError:
+                check("网络：拒绝非法配置 " + json.dumps(bad, ensure_ascii=False), True)
+        check("网络：默认关闭", not listeners.NetworkConfig().enabled)
+
+    def test_category_guard(self):
+        with mock.patch.dict(os.environ, {"MOZU_NET_CATEGORY": "Public"}):
+            try:
+                listeners.ensure_allowed(
+                    listeners.NetworkConfig(enabled=True, mode="lan", bind="127.0.0.1"))
+                check("网络：公用网络拒绝开启", False)
+            except listeners.NetworkConfigError:
+                check("网络：公用网络拒绝开启", True)
+        with mock.patch.dict(os.environ, {"MOZU_NET_CATEGORY": "Private"}):
+            got = listeners.ensure_allowed(
+                listeners.NetworkConfig(enabled=True, mode="lan", bind="127.0.0.1"))
+            check("网络：专用网络允许开启", got.enabled and got.bind == "127.0.0.1")
+        with mock.patch.dict(os.environ, {"MOZU_NET_CATEGORY": "Private"}):
+            try:
+                listeners.ensure_allowed(
+                    listeners.NetworkConfig(enabled=True, mode="tailnet", bind="192.168.1.5"))
+                check("网络：tailnet 只接受 100.64/10", False)
+            except listeners.NetworkConfigError:
+                check("网络：tailnet 只接受 100.64/10", True)
+
+
+class TlsTests(unittest.TestCase):
+    def test_cert_lifecycle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx, fp, cert_path = mtls.ensure(Path(tmp), ["mozu.test"],
+                                             ["127.0.0.1", "192.168.1.10"])
+            check("TLS：生成 SSLContext", ctx is not None)
+            check("TLS：指纹 64 hex",
+                  len(fp) == 64 and all(c in "0123456789ABCDEF" for c in fp))
+            check("TLS：证书文件存在", Path(cert_path).is_file())
+            cert = mtls.load(Path(cert_path), Path(tmp) / "tls" / "key.pem")
+            check("TLS：SAN 覆盖绑定地址", mtls._covers(cert, ["mozu.test"], ["192.168.1.10"]))
+            _, fp2, _ = mtls.ensure(Path(tmp), ["mozu.test"], ["127.0.0.1"])
+            check("TLS：未改绑定复用证书", fp2 == fp)
+            _, fp3, _ = mtls.ensure(Path(tmp), ["mozu.test"], ["127.0.0.1"], rotate=True)
+            check("TLS：轮换后指纹变化", fp3 != fp)
+            check("TLS：指纹可格式化", mtls.format_fingerprint(fp).count(":") == 31)
+
+
+class NetworkStateTests(unittest.TestCase):
+    def _state(self, tmp, network=None):
+        st = security_state.SecurityState(
+            Path(tmp), port=8097, net_port=8443, network=network, lockout_s=30)
+        st.launch_token = "LAUNCH-TEST"
+        st.setup_code = "SETUP-TEST"
+        return st
+
+    def test_network_source_guards(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            net = listeners.NetworkConfig(
+                enabled=True, mode="lan", bind="127.0.0.1", port=8443,
+                allowed_cidrs=("127.0.0.0/8",))
+            st = self._state(tmp, net)
+            hdr = {"Host": "127.0.0.1:8443"}
+            r = st.authorize(method="GET", path="/api/state", headers=hdr,
+                             client_ip="127.0.0.1", loopback=False)
+            check("网络：白名单来源未登录 401", r.status == 401, str(r.status))
+            r = st.authorize(method="GET", path="/api/state", headers=hdr,
+                             client_ip="10.1.2.3", loopback=False)
+            check("网络：白名单外 403", r.status == 403, str(r.status))
+            r = st.authorize(method="GET", path="/api/setup/status", headers=hdr,
+                             client_ip="127.0.0.1", loopback=False)
+            check("网络：本地专属接口在网络入口 403", r.status == 403, str(r.status))
+            check("网络：Host 允许绑定地址", "127.0.0.1:8443" in st.allowed_hosts(False))
+            check("网络：Origin 用 https",
+                  "https://127.0.0.1:8443" in st.allowed_origins(False))
+            st.set_network(listeners.NetworkConfig(
+                enabled=True, mode="lan", bind="127.0.0.1", port=9443,
+                allowed_cidrs=("127.0.0.0/8",)))
+            check("网络：端口切换后 Host 跟随", "127.0.0.1:9443" in st.allowed_hosts(False))
+
+    def test_disabled_network_denies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            st = self._state(tmp)
+            r = st.authorize(method="GET", path="/api/state",
+                             headers={"Host": "127.0.0.1:8443"},
+                             client_ip="127.0.0.1", loopback=False)
+            check("网络：未开启时网络入口 403", r.status == 403, str(r.status))
+
+
 def main() -> int:
-    print("=== security core selftest (1.0.1 check) ===")
+    print("=== security core selftest (1.0.3 check) ===")
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromModule(sys.modules[__name__])
     result = unittest.TextTestRunner(verbosity=0).run(suite)
