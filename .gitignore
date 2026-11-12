@@ -28,3 +28,6 @@ dist/
 
 # 发布产物通过 GitHub Release 上传，不进入 git 历史
 release/
+
+# 本地隔离实例与测试产物
+temp/
