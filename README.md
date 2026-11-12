@@ -27,10 +27,11 @@
 | 产物 | 说明 |
 | --- | --- |
 | `Mozunitor-1.0.0-portable.exe` | Windows 便携版，双击运行，不写注册表、不需要安装 |
-| `Mozunitor-1.0.0.apk` | Android 手机端，安装后在「配置」里填面板地址与凭据 |
+| `Mozunitor-1.0.0.apk` | Android 手机端（自签名），安装后在「配置」里填面板地址与凭据 |
 
 > 便携版首次运行时会在 exe 旁边生成 `services.json`（来自 `services.example.json`）以及
-> `.state/`、`logs/`。请先编辑 `services.json` 里的服务、探针与路径，再启动。
+> `.state/`、`logs/`，并弹出「设置本机凭据」；可以先点「稍后再说」，之后再改。
+> 请先编辑 `services.json` 里的服务、探针与路径，再启动。
 > 面板默认只监听 `127.0.0.1:8090`；需要局域网/手机访问时把 `listen.host` 改为 `0.0.0.0`，
 > 并妥善保管 `.state/access-tokens.json`。
 
