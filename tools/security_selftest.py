@@ -27,6 +27,7 @@ from mozunitor import tls as mtls  # noqa: E402
 from mozunitor.net import listeners  # noqa: E402
 from mozunitor.security import (audit, authz, csrf, identity, pairing,
                                 passwords, ratelimit, sessions)  # noqa: E402
+from mozunitor.security import nodes as peer_nodes  # noqa: E402
 from mozunitor.security import state as security_state  # noqa: E402
 
 
@@ -534,8 +535,48 @@ class PairingTests(unittest.TestCase):
                 check("配对：失败限流 429", exc.status == 429, str(exc.status))
 
 
+class NodeTests(unittest.TestCase):
+    def test_node_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = peer_nodes.NodeStore(Path(tmp))
+            record = store.register("node-b", "B", "https://b:8443", "mozn_in")
+            check("节点：注册记录", record["id"] == "node-b")
+            check("节点：入站 token 可校验",
+                  (store.verify("mozn_in") or {}).get("id") == "node-b")
+            check("节点：错误 token 拒绝", store.verify("mozn_bad") is None)
+            store.set_outgoing("node-b", "mozn_out")
+            check("节点：出站 token 可取", store.outgoing("node-b") == "mozn_out")
+            text = (Path(tmp) / "nodes.json").read_text(encoding="utf-8")
+            check("节点：记录不存明文 token", "mozn_in" not in text)
+            check("节点：吊销", store.revoke("node-b") and store.verify("mozn_in") is None)
+
+    def test_state_node_pairing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            st = security_state.SecurityState(Path(tmp), port=8097, lockout_s=30)
+            st.setup_code = "SETUP-TEST"
+            st.complete_setup("password123", "SETUP-TEST", client_ip="127.0.0.1")
+            issued = st.start_node_pairing(client_ip="127.0.0.1")
+            check("节点：生成配对码", len(issued["code"]) == pairing.PAIR_CODE_LEN)
+            record, outgoing = st.complete_node_pairing(
+                issued["code"], "node-a", "A", "https://a:8443", "mozn_peer_token",
+                client_ip="10.0.0.5")
+            check("节点：完成配对并返回出站 token", outgoing.startswith("mozn_"))
+            hdr = _hdr(Authorization="Bearer mozn_peer_token")
+            r = st.authorize(method="GET", path="/api/state", headers=hdr,
+                             client_ip="127.0.0.1", loopback=True)
+            check("节点：节点 token 可读", r.status == 200 and r.via == "node",
+                  f"{r.status}/{r.via}")
+            r = st.authorize(method="GET", path="/api/security", headers=hdr,
+                             client_ip="127.0.0.1", loopback=True)
+            check("节点：节点 token 进不了 admin", r.status == 403, str(r.status))
+            st.revoke_node("node-a", client_ip="127.0.0.1")
+            r = st.authorize(method="GET", path="/api/state", headers=hdr,
+                             client_ip="127.0.0.1", loopback=True)
+            check("节点：吊销后 401", r.status == 401, str(r.status))
+
+
 def main() -> int:
-    print("=== security core selftest (1.0.4 check) ===")
+    print("=== security core selftest (1.0.5 check) ===")
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromModule(sys.modules[__name__])
     result = unittest.TextTestRunner(verbosity=0).run(suite)

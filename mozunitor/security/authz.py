@@ -15,6 +15,7 @@ PUBLIC_FLOWS = {
     "/api/session/login": "any",
     "/api/session/launch": "local",
     "/api/pair/complete": "network",
+    "/api/nodes/pair/complete": "network",
 }
 
 
@@ -83,6 +84,16 @@ ROUTES: tuple[Route, ...] = (
        audit=True, note="生成一次性配对码"),
     _r("POST", r"^/api/pair/complete$", None, listener="network",
        content_type="json", audit=True, note="设备凭配对码换取 token；限流"),
+    # ---- 节点互联（P5）
+    _r("GET", r"^/api/nodes$", "read", note="已配对节点与最近使用时间"),
+    _r("POST", r"^/api/nodes/pair/start$", "admin", csrf=True, content_type="json",
+       audit=True, note="生成节点配对码（交给对端管理员）"),
+    _r("POST", r"^/api/nodes/pair$", "admin", listener="local", csrf=True,
+       content_type="json", audit=True, note="主动配对一个对端（出站）"),
+    _r("POST", r"^/api/nodes/pair/complete$", None, listener="network",
+       content_type="json", audit=True, note="对端凭配对码换取节点 token；限流"),
+    _r("POST", r"^/api/nodes/revoke$", "admin", listener="local", csrf=True,
+       content_type="json", audit=True),
 )
 
 # 1.0.0 的旧通道：明确下线，返回 410 并指向新流程；不再接受任何凭据。

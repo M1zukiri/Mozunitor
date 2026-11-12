@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-11-13）
 
-- 版本 **1.0.4**（公开基线 1.0.0；安全重构 P4 检查点）。开发分支 `refactor/security`，按
+- 版本 **1.0.5**（公开基线 1.0.0；安全重构 P5 检查点）。开发分支 `refactor/security`，按
   `docs/SPEC-security-hardening.md` 执行；B 位目标 **1.1.0**。
 
 ## 进度记录
@@ -35,4 +35,10 @@
   `X-Mozunitor-Device-Token` 设备 token（read/write），配对与吊销写审计；`/api/devices`、
   `/api/pair/start`、`/api/pair/complete`、`/api/devices/revoke` 上线；设置页「安全」分节可生成
   配对码、查看与吊销设备。自检：unit **128 项**、HTTP **42 项** 全 PASS；Playwright：配对区可见、
-  配对码生成展示、无 JS 异常。Android 端（扫码/钉证书/Keystore/多面板）与 P5、P6 未做。
+  配对码生成展示、无 JS 异常。
+- P5（C 位 **1.0.5**）：节点互联 —— `mozunitor/security/nodes.py`（节点配对记录、入站 token
+  哈希、出站 token、钉证书指纹的 HTTP(S) 客户端）；`SecurityState` 接受节点 token（via=node、
+  write 权限），`/api/nodes*` 与配对接口上线；mesh 拉取/转发改走节点 token + 指纹钉住，未配对
+  一律 401；设置页「安全」分节可配对节点/生成节点配对码/解除；节点令牌替换掉已失效的用户名+HMAC
+  通道。自检：unit **139 项**、HTTP **50 项** 全 PASS（含双实例配对后 mesh 拉取、未配对 401）。
+  forwards 短 TTL ticket 仍待补；Android 客户端与 P6 未做。

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import authz, csrf, pairing
+from . import nodes as peer_nodes
 from .audit import AuditLog
 from .identity import LocalToken, NodeIdentity, harden_file, random_token
 from .passwords import hash_password, needs_rehash, verify_password
@@ -45,6 +46,7 @@ class AuthResult:
     route: authz.Route | None = None
     via: str = ""
     device_id: str = ""
+    node_id: str = ""
     retry_after: float = 0.0
 
 
@@ -74,6 +76,7 @@ class SecurityState:
     audit: AuditLog = field(init=False)
     devices: pairing.DeviceStore = field(init=False)
     pair_codes: pairing.PairCodes = field(init=False)
+    nodes: peer_nodes.NodeStore = field(init=False)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
@@ -85,6 +88,7 @@ class SecurityState:
         self.local_token.ensure()
         self.devices = pairing.DeviceStore(self.state_dir / "devices.json")
         self.pair_codes = pairing.PairCodes()
+        self.nodes = peer_nodes.NodeStore(self.state_dir)
         secret = self._load_secret(self.state_dir / "session-secret")
         self.sessions = SessionStore(secret, ttl_s=self.ttl_s, max_age_s=self.max_age_s,
                                      clock=self.clock)
@@ -208,12 +212,16 @@ class SecurityState:
             supplied = headers.get("X-Mozunitor-Local-Token") or ""
             if supplied and self.local_token.verify(supplied):
                 return AuthResult(scope="admin", via="local-token")
-        device_token = pairing.bearer_token(headers)
-        if device_token:
-            device = self.devices.verify(device_token)
+        supplied = pairing.bearer_token(headers)
+        if supplied:
+            device = self.devices.verify(supplied)
             if device is not None:
                 return AuthResult(scope=str(device.get("scope") or "read"),
                                   via="device", device_id=str(device.get("id") or ""))
+            node = self.nodes.verify(supplied)
+            if node is not None:
+                return AuthResult(scope="write", via="node",
+                                  node_id=str(node.get("id") or ""))
         session = self.sessions.get(self._cookie_from_headers(headers))
         if session is not None:
             return AuthResult(scope=session.scope, session=session, via="session")
@@ -395,6 +403,73 @@ class SecurityState:
     def devices_snapshot(self) -> dict:
         return {"devices": self.devices.list()}
 
+    # ---------------------------------------------------------------- 节点互联
+    def start_node_pairing(self, *, client_ip: str) -> dict:
+        code, expires = self.pair_codes.issue()
+        self.audit.write("node_pair_started", ip=client_ip)
+        return {"code": code, "expires_at": expires, "ttl_s": self.pair_codes.ttl_s}
+
+    def complete_node_pairing(self, code: str, node_id: str, name: str, url: str,
+                              incoming_token: str, *, client_ip: str,
+                              fingerprint: str = "", ua: str = "") -> tuple[dict, str]:
+        key = f"pair:{client_ip}"
+        allowed, wait = self.limiter.allow(key)
+        if not allowed:
+            raise AuthError(429, "配对尝试过于频繁，请稍后再试", retry_after=wait)
+        if not self.pair_codes.redeem(code):
+            self.limiter.fail(key)
+            self.audit.write("node_pair_failed", ip=client_ip, ua=ua)
+            raise AuthError(403, "配对码不正确或已过期")
+        if not incoming_token:
+            raise AuthError(400, "缺少节点 token")
+        record = self.nodes.register(node_id, name, url, incoming_token,
+                                     fingerprint=fingerprint)
+        self.limiter.success(key)
+        outgoing = peer_nodes.new_token()
+        self.nodes.set_outgoing(str(record["id"]), outgoing)
+        self.audit.write("node_pair_completed", ip=client_ip, ua=ua, node=record["id"])
+        return record, outgoing
+
+    def pair_with_peer(self, url: str, code: str, *, node_id: str, node_name: str,
+                       self_url: str, fingerprint: str = "",
+                       client_ip: str = "") -> tuple[dict, str]:
+        our_token = peer_nodes.new_token()
+        body = {"code": code, "node": {"id": node_id, "name": node_name},
+                "url": self_url, "token": our_token}
+        try:
+            status, payload, fp = peer_nodes.request(
+                url, "POST", "/api/nodes/pair/complete", body=body,
+                expected_fingerprint=fingerprint)
+        except peer_nodes.NodeError as exc:
+            raise AuthError(exc.status, exc.message)
+        except OSError as exc:
+            raise AuthError(502, f"连接对端失败：{exc}")
+        if status != 200 or not payload.get("ok"):
+            raise AuthError(status if status in (400, 403, 429) else 502,
+                            str(payload.get("error") or f"对端配对失败（HTTP {status}）"))
+        remote = payload.get("node") or {}
+        remote_id = str(remote.get("id") or "")
+        if not remote_id:
+            raise AuthError(502, "对端没有返回节点 id")
+        if fingerprint and fp != str(fingerprint).upper():
+            raise AuthError(400, "对端证书指纹与指定值不一致")
+        token = str(payload.get("token") or "")
+        if not token:
+            raise AuthError(502, "对端没有返回节点 token")
+        self.nodes.register(remote_id, str(remote.get("name") or remote_id), url,
+                            token, fingerprint=fp)
+        self.nodes.set_outgoing(remote_id, our_token)
+        self.audit.write("node_paired", ip=client_ip, node=remote_id, url=url)
+        return self.nodes.get(remote_id) or {}, token
+
+    def revoke_node(self, node_id: str, *, client_ip: str) -> None:
+        if not self.nodes.revoke(node_id):
+            raise AuthError(404, "节点不存在")
+        self.audit.write("node_revoked", ip=client_ip, node=node_id)
+
+    def nodes_snapshot(self) -> dict:
+        return {"nodes": self.nodes.list()}
+
     def snapshot(self) -> dict:
         net = self.network or NetworkConfig()
         return {
@@ -406,4 +481,5 @@ class SecurityState:
             "network": net.snapshot(),
             "net_port": self.net_port,
             "devices": self.devices.list(),
+            "nodes": self.nodes.list(),
         }

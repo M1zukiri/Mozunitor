@@ -136,6 +136,10 @@ function securitySection() {
   const net = SEC.network || {};
   const fp = net.tls_fingerprint_pretty || '未生成（开启网络入口后生成）';
   const cidrs = (net.allowed_cidrs || []).join(', ');
+  const nodes = (SEC.nodes || []).map((n) =>
+    `<div class="pref-row"><span class="pref-name">${esc(n.name)} · ${esc(n.id)}</span>`
+    + `<span class="pref-note">${esc(n.url || '')}</span>`
+    + `<button class="ghost" data-revoke-node="${esc(n.id)}">解除</button></div>`).join('');
   const devices = (SEC.devices || []).map((d) =>
     `<div class="pref-row"><span class="pref-name">${esc(d.name)}</span>`
     + `<span class="pref-note">${d.revoked ? '已吊销' : esc(d.scope || '')}</span>`
@@ -185,7 +189,19 @@ function securitySection() {
     </div>
     <button type="button" data-start-pair="1">生成配对码</button>
     <h3 class="sec">已配对设备</h3>
-    <div class="pref-list">${devices || '<div class="empty">还没有配对设备</div>'}</div>`;
+    <div class="pref-list">${devices || '<div class="empty">还没有配对设备</div>'}</div>
+    <h3 class="sec">节点互联</h3>
+    <p class="hint">与另一台机器配对后，本机面板会主动拉取对端 /api/node；未配对节点一律 401。</p>
+    <div class="pref-list">${nodes || '<div class="empty">还没有配对节点</div>'}</div>
+    <div class="pref-list">
+      <label class="pref-row"><span class="pref-name">对端地址</span>
+        <input type="text" class="wide" data-node-url placeholder="https://192.168.1.20:8443/"></label>
+      <label class="pref-row"><span class="pref-name">对端配对码</span>
+        <input type="text" data-node-code placeholder="对端生成的配对码"></label>
+    </div>
+    <button type="button" data-pair-node="1">配对该节点</button>
+    <button type="button" data-node-pair-start="1">生成我的节点配对码</button>
+    <p class="hint" id="node-pair-code"></p>`;
 }
 
 function netValues(extra) {
@@ -272,13 +288,72 @@ async function revokeDevice(id) {
   }
 }
 
+async function pairNode() {
+  const q = (sel) => document.querySelector(sel);
+  try {
+    const r = await authFetch('/api/nodes/pair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: (((q('[data-node-url]') || {}).value) || '').trim(),
+        code: (((q('[data-node-code]') || {}).value) || '').trim(),
+      }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    SEC = Object.assign({}, SEC, { nodes: d.nodes || [] });
+    renderSettings();
+    toast('节点已配对', 'ok');
+  } catch (e) {
+    toast(`节点配对失败：${e}`, 'bad');
+  }
+}
+
+async function nodePairStart() {
+  try {
+    const r = await authFetch('/api/nodes/pair/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    const el = document.querySelector('#node-pair-code');
+    if (el) el.textContent = '配对码 ' + d.code + '（' + Math.round((d.expires_in || 300) / 60) + ' 分钟内有效）';
+    toast('节点配对码已生成：' + d.code, 'ok');
+  } catch (e) {
+    toast(`生成节点配对码失败：${e}`, 'bad');
+  }
+}
+
+async function revokeNode(id) {
+  try {
+    const r = await authFetch('/api/nodes/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    SEC = Object.assign({}, SEC, { nodes: d.nodes || [] });
+    renderSettings();
+    toast('节点已解除配对', 'ok');
+  } catch (e) {
+    toast(`解除配对失败：${e}`, 'bad');
+  }
+}
+
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-save-network]')) { saveNetwork(netValues()); return; }
   if (e.target.closest('[data-rotate-cert]')) { saveNetwork(netValues({ rotate_cert: true })); return; }
   if (e.target.closest('[data-save-password]')) { savePassword(); return; }
   if (e.target.closest('[data-start-pair]')) { startPair(); return; }
+  if (e.target.closest('[data-pair-node]')) { pairNode(); return; }
+  if (e.target.closest('[data-node-pair-start]')) { nodePairStart(); return; }
   const rev = e.target.closest('[data-revoke-device]');
-  if (rev) revokeDevice(rev.dataset.revokeDevice);
+  if (rev) { revokeDevice(rev.dataset.revokeDevice); return; }
+  const rn = e.target.closest('[data-revoke-node]');
+  if (rn) revokeNode(rn.dataset.revokeNode);
 });
 
 export function renderSettings() {

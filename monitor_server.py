@@ -33,6 +33,7 @@ from mozunitor import tls as mtls
 from mozunitor.net.listeners import (NetworkConfig, NetworkConfigError, NetworkServer,
                                      default_bind, ensure_allowed, serve_in_thread)
 from mozunitor.net.listeners import stop as stop_network_server
+from mozunitor.security import nodes as peer_nodes
 from mozunitor.security.state import AuthError as SecurityAuthError
 from mozunitor.security.state import SecurityState
 from pathlib import Path
@@ -191,7 +192,7 @@ SECURITY = SecurityState(
     login_max_failures=int(_SECURITY_CFG.get("login_max_failures", 5)),
     lockout_s=int(_SECURITY_CFG.get("lockout_s", 300)),
 )
-SERVER_VERSION = "Mozunitor/1.0.4"
+SERVER_VERSION = "Mozunitor/1.0.5"
 
 
 # 远端 Ollama 的模型状态：直接走 HTTP，不经 SSH。expires_at 是绝对时间戳、倒计时由前端算，
@@ -1117,15 +1118,13 @@ def tailscale_devices() -> list[tuple[str, str]]:
     return devs
 
 
-def probe_node(url: str) -> dict | None:
-    """试连一个候选节点的 /api/node。对方不认这个用户名就会 401，即视作不同类。"""
+def probe_node(url: str, peer: dict | None = None) -> dict | None:
+    """试连一个候选节点的 /api/node。未配对节点没有 token，一律 401，视作不同类。"""
     try:
-        req = urllib.request.Request(url.rstrip("/") + "/api/node",
-                                     headers=peer_headers("GET", "/api/node"))
-        with _OPENER.open(req, timeout=DISCOVER_TIMEOUT_S) as r:
-            return json.loads(r.read().decode("utf-8"))
+        status, payload, _fp = peer_nodes.request(url, "GET", "/api/node")
     except Exception:                                     # noqa: BLE001
         return None
+    return payload if status == 200 else None
 
 
 def discover_loop() -> None:
@@ -1460,17 +1459,21 @@ def build_node_snapshot() -> dict:
     }
 
 
-def fetch_peer(peer: dict) -> dict:
-    """拉取一个对等节点的原子快照。
+def _peer_call(peer: dict, method: str, path: str, body: dict | None = None):
+    """访问对端：节点 token（Bearer）+ 已记录证书指纹钉住。"""
+    pid = str(peer.get("id") or "")
+    record = SECURITY.nodes.get(pid) or {}
+    return peer_nodes.request(str(peer["url"]), method, path, body=body,
+                              token=SECURITY.nodes.outgoing(pid),
+                              expected_fingerprint=str(record.get("fingerprint") or ""))
 
-    走 _OPENER 直连，与探测同一口径 —— 本机代理挂没挂不该混进「对方在不在」的判断。
-    """
-    url = str(peer["url"]).rstrip("/") + "/api/node"
-    req = urllib.request.Request(url, headers={
-        **peer_headers("GET", "/api/node"), "Accept": "application/json",
-    })
-    with _OPENER.open(req, timeout=PEER_TIMEOUT_S) as r:
-        return json.loads(r.read().decode("utf-8"))
+
+def fetch_peer(peer: dict) -> dict:
+    """拉取一个对等节点的原子快照；未配对（无 token）会在对端得到 401。"""
+    status, payload, _fp = _peer_call(peer, "GET", "/api/node")
+    if status != 200:
+        raise OSError(f"对端返回 HTTP {status}")
+    return payload
 
 
 def forward_action(peer: dict, path: str, payload: dict) -> tuple[int, dict]:
@@ -1479,22 +1482,9 @@ def forward_action(peer: dict, path: str, payload: dict) -> tuple[int, dict]:
     只转发动作本身并剥掉 node 字段 —— 对端不必知道这次请求是替谁发的。
     返回 (状态码, 正文)：对端的业务答复原样带回，本机不替它改写结论。
     """
-    url = str(peer["url"]).rstrip("/") + path
-    body = json.dumps({k: v for k, v in payload.items() if k != "node"}).encode("utf-8")
-    req = urllib.request.Request(url, data=body, headers={
-        **peer_headers("POST", path), "Content-Type": "application/json",
-    })
-    try:
-        with _OPENER.open(req, timeout=FORWARD_TIMEOUT_S) as r:
-            return r.status, json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        # 对端答复了（例如「未知服务 id」）——那是它的业务判断，状态码与正文原样透传；
-        # 只有连不上或超时才算本机的转发失败，由调用方报 502。
-        raw = e.read().decode("utf-8", "replace")
-        try:
-            return e.code, json.loads(raw)
-        except json.JSONDecodeError:
-            return e.code, {"error": f"对端返回 HTTP {e.code}"}
+    body = {k: v for k, v in payload.items() if k != "node"}
+    status, reply, _fp = _peer_call(peer, "POST", path, body=body)
+    return status, reply
 
 
 # ---------------------------------------------------------------- 重启
@@ -3138,19 +3128,9 @@ def service_settings_write(svc: dict, values: dict, via: str) -> dict:
 
 
 def forward_get(peer: dict, path: str) -> tuple[int, dict]:
-    """GET 转发（服务参数读取）。与 forward_action 同一套 peer 证明。"""
-    url = str(peer["url"]).rstrip("/") + path
-    req = urllib.request.Request(url, headers={
-        **peer_headers("GET", path), "Accept": "application/json"})
-    try:
-        with _OPENER.open(req, timeout=FORWARD_TIMEOUT_S) as r:
-            return r.status, json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        raw = e.read().decode("utf-8", "replace")
-        try:
-            return e.code, json.loads(raw)
-        except json.JSONDecodeError:
-            return e.code, {"error": f"对端返回 HTTP {e.code}"}
+    """GET 转发（服务参数读取）。与 forward_action 同一套节点 token。"""
+    status, reply, _fp = _peer_call(peer, "GET", path)
+    return status, reply
 
 
 # ---------------------------------------------------------------- 中继
@@ -4165,18 +4145,12 @@ def read_session(value: str) -> str:
     return level if hmac.compare_digest(mac, expect) else ""
 
 
-def peer_headers(method: str, path: str) -> dict:
-    """访问对端时带上的身份。
-
-    用户名让对端判断「是不是同类」；HMAC 证明用来换取高权限。两边都只用自己那份
-    凭据算，因此本机不需要知道对端的密码，对端也不需要知道本机的。
-    """
-    ts = str(int(time.time()))
-    key = str(CREDS.get("key") or "")
-    mac = hmac.new(key.encode("utf-8"), f"{method}\n{path}\n{ts}".encode("utf-8"),
-                   hashlib.sha256).hexdigest()
-    return {"X-Mozunitor-User": str(CREDS.get("username") or ""),
-            "X-Mozunitor-Time": ts, "X-Mozunitor-Mac": mac}
+def peer_headers(peer: dict | None = None) -> dict:
+    """访问对端时带上的身份：已配对节点用节点 token（Bearer）；未配对不带。"""
+    if not peer:
+        return {}
+    token = SECURITY.nodes.outgoing(str(peer.get("id") or ""))
+    return {"Authorization": "Bearer " + token} if token else {}
 
 
 def token_matches(cand: str | None) -> bool:
@@ -4599,6 +4573,12 @@ def print_access_hints(host: str, port: int) -> None:
         print(f"  [迁移] {MIGRATION_NOTE}")
 
 
+def network_self_url() -> str:
+    if NETWORK_CFG.enabled and NETWORK_CFG.bind:
+        return f"https://{NETWORK_CFG.bind}:{NETWORK_CFG.port}/"
+    return ""
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "Mozunitor/1.0.2"
     protocol_version = "HTTP/1.1"
@@ -4854,6 +4834,63 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, {"ok": True, "devices": SECURITY.devices_snapshot()["devices"]})
 
+    def _handle_node_pair_start(self) -> None:
+        if not NETWORK_CFG.enabled:
+            self._send(400, {"error": "先开启网络入口（HTTPS）再配对节点"})
+            return
+        issued = SECURITY.start_node_pairing(client_ip=self._client_ip())
+        pair = {"url": network_self_url(), "fingerprint": TLS_FINGERPRINT,
+                "code": issued["code"], "node": {"id": NODE_ID, "name": NODE_NAME},
+                "expires_at": issued["expires_at"]}
+        self._send(200, {"ok": True, "code": issued["code"],
+                         "expires_in": int(issued["ttl_s"]), "pair": pair})
+
+    def _handle_node_pair(self, payload: dict) -> None:
+        url = str(payload.get("url") or "").strip()
+        code = str(payload.get("code") or "").strip()
+        if not url or not code:
+            self._send(400, {"error": "需要 url 与 code"})
+            return
+        if not NETWORK_CFG.enabled:
+            self._send(400, {"error": "先开启网络入口（HTTPS）再配对节点"})
+            return
+        try:
+            node, _ = SECURITY.pair_with_peer(
+                url, code, node_id=NODE_ID, node_name=NODE_NAME,
+                self_url=network_self_url(),
+                fingerprint=str(payload.get("fingerprint") or ""),
+                client_ip=self._client_ip())
+        except SecurityAuthError as exc:
+            self._auth_error(exc)
+            return
+        self._send(200, {"ok": True, "node": node,
+                         "nodes": SECURITY.nodes_snapshot()["nodes"]})
+
+    def _handle_node_pair_complete(self, payload: dict) -> None:
+        remote = payload.get("node") or {}
+        try:
+            record, outgoing = SECURITY.complete_node_pairing(
+                str(payload.get("code") or ""), str(remote.get("id") or ""),
+                str(remote.get("name") or "节点"), str(payload.get("url") or ""),
+                str(payload.get("token") or ""), client_ip=self._client_ip(),
+                ua=self._ua())
+        except SecurityAuthError as exc:
+            self._auth_error(exc)
+            return
+        self._send(200, {"ok": True, "peer": record,
+                         "node": {"id": NODE_ID, "name": NODE_NAME,
+                                  "fingerprint": TLS_FINGERPRINT},
+                         "token": outgoing})
+
+    def _handle_node_revoke(self, payload: dict) -> None:
+        try:
+            SECURITY.revoke_node(str(payload.get("id") or ""),
+                                 client_ip=self._client_ip())
+        except SecurityAuthError as exc:
+            self._auth_error(exc)
+            return
+        self._send(200, {"ok": True, "nodes": SECURITY.nodes_snapshot()["nodes"]})
+
     def _send(self, code: int, body, ctype: str = "application/json; charset=utf-8",
               extra_headers: list | None = None) -> None:
         if isinstance(body, (dict, list)):
@@ -4938,6 +4975,11 @@ class Handler(BaseHTTPRequestHandler):
             snap["pairing"] = {"network_enabled": NETWORK_CFG.enabled,
                                "tls_fingerprint": TLS_FINGERPRINT}
             self._send(200, snap)
+        elif path == "/api/nodes":
+            snap = SECURITY.nodes_snapshot()
+            snap["self"] = {"id": NODE_ID, "name": NODE_NAME,
+                            "url": network_self_url(), "fingerprint": TLS_FINGERPRINT}
+            self._send(200, snap)
         elif path == "/api/state":
             self._send(200, build_view())
         elif path == "/api/node":
@@ -5002,6 +5044,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/devices/revoke":
             self._handle_device_revoke(payload)
+            return
+        if path == "/api/nodes/pair/start":
+            self._handle_node_pair_start()
+            return
+        if path == "/api/nodes/pair":
+            self._handle_node_pair(payload)
+            return
+        if path == "/api/nodes/pair/complete":
+            self._handle_node_pair_complete(payload)
+            return
+        if path == "/api/nodes/revoke":
+            self._handle_node_revoke(payload)
             return
 
         if path in ("/api/restart", "/api/stop"):

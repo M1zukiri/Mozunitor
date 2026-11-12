@@ -46,11 +46,12 @@ def build_config(path: Path) -> None:
     cfg = {
         "listen": {"host": "127.0.0.1", "port": PORT},
         "node": {"id": "http-selftest", "name": "HTTP-Selftest"},
-        "peers": {"list": [], "discover": {"tailscale": False}},
+        "peers": {"list": [{"id": "node-b", "url": "https://127.0.0.1:8134"}],
+                  "discover": {"tailscale": False}},
         "access": {"tokens_file": ".state/access-tokens.json"},
         "forwards": {"bind": "127.0.0.1", "ports": []},
         "intervals": {"probe_local_ms": 5000, "sample_local_ms": 60000,
-                      "sample_remote_ms": 60000, "peer_poll_ms": 60000,
+                      "sample_remote_ms": 60000, "peer_poll_ms": 500,
                       "keepalive_ms": 60000},
         "ui": {}, "relay": {"enabled": False},
         "groups": [{"id": "local", "title": "本地"}],
@@ -88,7 +89,7 @@ class Client:
 
 
 def main() -> int:
-    print("=== security http selftest (1.0.4 check) ===")
+    print("=== security http selftest (1.0.5 check) ===")
     tmp = Path(tempfile.mkdtemp(prefix="mozu-p2-"))
     cfg = tmp / "services.json"
     state = tmp / "state"
@@ -106,6 +107,7 @@ def main() -> int:
     proc = subprocess.Popen([sys.executable, "-u", str(ROOT / "monitor_server.py")],
                             cwd=str(ROOT), env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    proc_b = None
     try:
         up = False
         for _ in range(40):
@@ -270,7 +272,90 @@ def main() -> int:
         code, _, _ = dev.req("GET", "/api/state",
                              headers={"Authorization": "Bearer " + device_token})
         check("配对：吊销后 401", code == 401, str(code))
+
+        # ---- 节点互联：两实例配对后 mesh 读取 ----
+        tmp_b = Path(tempfile.mkdtemp(prefix="mozu-b-"))
+        B_HTTP, B_HTTPS = PORT + 10, PORT_NET + 10
+        cfg_b = tmp_b / "services.json"
+        cfg_data = json.loads(cfg.read_text(encoding="utf-8"))
+        cfg_data["listen"] = {"local": {"host": "127.0.0.1", "port": B_HTTP},
+                              "network": {"enabled": True, "mode": "lan",
+                                          "bind": "127.0.0.1", "port": B_HTTPS,
+                                          "allowed_cidrs": ["127.0.0.0/8"]}}
+        cfg_data["node"] = {"id": "node-b", "name": "B"}
+        cfg_b.write_text(json.dumps(cfg_data, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+        state_b = tmp_b / "state"
+        env_b = dict(env)
+        env_b.update({"MOZU_CONFIG": str(cfg_b), "MOZU_STATE_DIR": str(state_b),
+                      "MOZU_SETUP_CODE": "BCODE", "MOZU_LAUNCH_TOKEN": "BLAUNCH",
+                      "MOZU_ACTION_LOG": str(tmp_b / "actions.jsonl")})
+        proc_b = subprocess.Popen([sys.executable, "-u", str(ROOT / "monitor_server.py")],
+                                  cwd=str(ROOT), env=env_b,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        up_b = False
+        for _ in range(40):
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{B_HTTP}/api/setup/status",
+                                            timeout=1) as r:
+                    if r.status == 200:
+                        up_b = True
+                        break
+            except Exception:  # noqa: BLE001
+                time.sleep(0.25)
+        check("节点：第二实例启动", up_b)
+
+        peer = Client(f"http://127.0.0.1:{B_HTTP}")
+        code, _, _ = peer.req("POST", "/api/setup/complete",
+                              body={"password": PASSWORD, "proof": "BCODE"})
+        check("节点：对端初始化", code == 200, str(code))
+        btok = (state_b / "local-token").read_text(encoding="utf-8").strip()
+        code, _, body = peer.req("POST", "/api/nodes/pair/start", body={},
+                                 headers={"X-Mozunitor-Local-Token": btok})
+        d = json.loads(body)
+        bcode = d.get("code") or ""
+        check("节点：对端生成配对码", code == 200 and len(bcode) == 8, str(code))
+
+        code, _, body = admin.req("POST", "/api/nodes/pair",
+                                  body={"url": f"https://127.0.0.1:{B_HTTPS}",
+                                        "code": bcode},
+                                  headers={"X-Mozunitor-Local-Token": tok})
+        d = json.loads(body)
+        check("节点：本端主动配对成功",
+              code == 200 and (d.get("node") or {}).get("id") == "node-b", str(code))
+        code, _, body = admin.req("GET", "/api/nodes",
+                                  headers={"X-Mozunitor-Local-Token": tok})
+        d = json.loads(body)
+        check("节点：本端列表含对端",
+              any(n.get("id") == "node-b" for n in d.get("nodes", [])))
+
+        time.sleep(2.5)
+        code, _, body = admin.req("GET", "/api/state",
+                                  headers={"X-Mozunitor-Local-Token": tok})
+        d = json.loads(body)
+        peers = d.get("peers") or {}
+        check("节点：面板拉到对端快照",
+              any(str(k) == "node-b" and bool((v or {}).get("online"))
+                  for k, v in peers.items()),
+              str(peers)[:120])
+
+        raw = Client(f"https://127.0.0.1:{B_HTTPS}", ssl._create_unverified_context())
+        code, _, _ = raw.req("GET", "/api/node")
+        check("节点：未配对访问 401", code == 401, str(code))
+
+        code, _, body = peer.req("GET", "/api/nodes",
+                                 headers={"X-Mozunitor-Local-Token": btok})
+        d = json.loads(body)
+        check("节点：对端列表含本端",
+              any(n.get("id") == "http-selftest" for n in d.get("nodes", [])),
+              str(d)[:120])
     finally:
+        if proc_b is not None:
+            proc_b.terminate()
+            try:
+                proc_b.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc_b.kill()
         proc.terminate()
         try:
             proc.wait(timeout=10)
