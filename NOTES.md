@@ -62,3 +62,14 @@
   （配对 → 设备 token → 面板数据；吊销后 401）。release APK 需在纯 ASCII 路径构建，见下方已知限制。
 - 已知限制：`forwards` 短 TTL ticket 未实现，1.1.0 不启动 forwards（改用 relay 或对端网络入口）；
   APK release 构建依赖纯 ASCII 工作路径与干净 gradle 环境。
+- 发布产物（1.1.0，重建于纯 ASCII 路径）：
+  - `Mozunitor-1.1.0-portable.exe` 70,670,860 B，
+    sha256 `d39d044c4428d91fa285a62ceffbf9f7f1478794b1cfeeed8e80c61feb0aee67`
+    （隔离目录启动验证：version `Mozunitor/1.1.0`，回环 8090 `needs_setup=true`）。
+  - `Mozunitor-1.1.0.apk` 51,393,862 B，
+    sha256 `c9ffd7449364d7d877b356d2b631a99c556a0dd4dc62afa5fcc6fbf5e41a008f`
+    （versionName=1.1.0，真机安装启动通过）。
+  - 产物在 `temp/release-1.1.0/`（不在版本库内）；GitHub Release 上传需要仓库凭据，
+    本机未配置 token，留给用户在网页/`gh` 完成。
+- 构建注意：exe 直接用 PyInstaller 默认路径即可；APK release 必须纯 ASCII 工作路径，
+  先 `flutter pub get` 一次，之后用 `--no-pub` 避免反复联网解析。
