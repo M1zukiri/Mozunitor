@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""安全核心自检（1.1.0 P1 检查点）。
+
+用法::
+
+    python tools\\security_selftest.py
+
+只测 `mozunitor/security/` 原语与路由表不变量，不起 HTTP 服务、不碰真实配置。
+全 PASS 返回 0。
+"""
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from mozunitor.security import (audit, authz, csrf, identity, passwords,
+                                ratelimit, sessions)  # noqa: E402
+from mozunitor.security import state as security_state  # noqa: E402
+
+
+def _hdr(**kw) -> dict:
+    base = {"Host": "127.0.0.1:8097"}
+    base.update(kw)
+    return base
+
+
+class SecurityStateTests(unittest.TestCase):
+    def _state(self, tmp: str):
+        st = security_state.SecurityState(Path(tmp), port=8097,
+                                          net_host="127.0.0.1", lockout_s=30)
+        st.launch_token = "LAUNCH-TEST"
+        st.setup_code = "SETUP-TEST"
+        return st
+
+    def test_no_implicit_loopback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            st = self._state(tmp)
+            r = st.authorize(method="GET", path="/api/state", headers=_hdr(),
+                             client_ip="127.0.0.1", loopback=True)
+            check("管线：回环未登录仍 401", r.status == 401, str(r.status))
+            r = st.authorize(method="GET", path="/api/state",
+                             headers=_hdr(**{"X-Mozunitor-Local-Token": st.local_token.load()}),
+                             client_ip="127.0.0.1", loopback=True)
+            check("管线：本地 token 放行（admin）", r.status == 200 and r.scope == "admin",
+                  f"{r.status}/{r.scope}")
+            r = st.authorize(method="GET", path="/api/security",
+                             headers=_hdr(**{"X-Mozunitor-Local-Token": st.local_token.load()}),
+                             client_ip="127.0.0.1", loopback=True)
+            check("管线：本地 token 可进 admin 路由", r.status == 200)
+
+    def test_route_guards(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            st = self._state(tmp)
+            r = st.authorize(method="POST", path="/api/auth", headers=_hdr(),
+                             client_ip="127.0.0.1", loopback=True)
+            check("管线：旧 /api/auth 返回 410", r.status == 410)
+            r = st.authorize(method="GET", path="/api/nope", headers=_hdr(),
+                             client_ip="127.0.0.1", loopback=True)
+            check("管线：未知路径 404", r.status == 404)
+            r = st.authorize(method="GET", path="/api/state",
+                             headers=_hdr(Host="evil.example.com"),
+                             client_ip="127.0.0.1", loopback=True)
+            check("管线：Host 伪造拒绝", r.status == 403, str(r.status))
+            r = st.authorize(method="POST", path="/api/setup/complete",
+                             headers=_hdr(), client_ip="10.0.0.1", loopback=False)
+            check("管线：本地专属接口拒绝远端", r.status == 403, str(r.status))
+
+    def test_setup_login_csrf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            st = self._state(tmp)
+            check("初始化：初始 needs_setup", st.needs_setup)
+            try:
+                st.complete_setup("password123", "WRONG", client_ip="127.0.0.1")
+                check("初始化：错误 setup code 拒绝", False)
+            except security_state.AuthError as exc:
+                check("初始化：错误 setup code 拒绝", exc.status == 403)
+            sess, cookie = st.complete_setup("password123", st.setup_code,
+                                             client_ip="127.0.0.1")
+            check("初始化：正确 setup code 成功", not st.needs_setup)
+            cookie_pair = cookie.split(";")[0]
+            ck = cookie_pair.split("=", 1)
+            h = _hdr(Cookie=f"{ck[0]}={ck[1]}")
+            r = st.authorize(method="GET", path="/api/state", headers=h,
+                             client_ip="127.0.0.1", loopback=True)
+            check("会话：setup 后可直接读", r.status == 200 and r.via == "session")
+            r = st.authorize(method="POST", path="/api/restart",
+                             headers=_hdr(**{"Host": "127.0.0.1:8097",
+                                             "Cookie": cookie_pair,
+                                             "Content-Type": "application/json"}),
+                             client_ip="127.0.0.1", loopback=True)
+            check("CSRF：缺 token 的写请求拒绝", r.status == 403, f"{r.status}/{r.error}")
+            r = st.authorize(method="POST", path="/api/restart",
+                             headers=_hdr(**{"Cookie": cookie_pair,
+                                             "Content-Type": "application/json",
+                                             "X-Mozunitor-CSRF": sess.csrf,
+                                             "Origin": "http://127.0.0.1:8097"}),
+                             client_ip="127.0.0.1", loopback=True)
+            check("CSRF：带 token 的写请求放行", r.status == 200, f"{r.status}/{r.error}")
+            r = st.authorize(method="POST", path="/api/restart",
+                             headers=_hdr(**{"Cookie": cookie_pair,
+                                             "Content-Type": "application/json",
+                                             "X-Mozunitor-CSRF": sess.csrf,
+                                             "Origin": "http://evil.example"}),
+                             client_ip="127.0.0.1", loopback=True)
+            check("CSRF：跨源 Origin 拒绝", r.status == 403)
+            r = st.authorize(method="POST", path="/api/restart",
+                             headers=_hdr(**{"Cookie": cookie_pair,
+                                             "Content-Type": "text/plain",
+                                             "X-Mozunitor-CSRF": sess.csrf}),
+                             client_ip="127.0.0.1", loopback=True)
+            check("CSRF：非 JSON Content-Type 拒绝", r.status == 415, str(r.status))
+
+    def test_login_rate_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            st = self._state(tmp)
+            st.complete_setup("password123", st.setup_code, client_ip="127.0.0.1")
+            for _ in range(5):
+                try:
+                    st.login("wrong", client_ip="10.0.0.9")
+                except security_state.AuthError:
+                    pass
+            try:
+                st.login("wrong", client_ip="10.0.0.9")
+                check("登录：失败 5 次后限流 429", False)
+            except security_state.AuthError as exc:
+                check("登录：失败 5 次后限流 429", exc.status == 429, str(exc.status))
+            sess, _ = st.login("password123", client_ip="10.0.0.8")
+            check("登录：正确口令签发会话", sess.scope == "write")
+
+    def test_change_password_revokes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            st = self._state(tmp)
+            sess, cookie = st.complete_setup("password123", st.setup_code,
+                                             client_ip="127.0.0.1")
+            pair = cookie.split(";")[0]
+            st.change_password("password123", "newpassword123", client_ip="127.0.0.1")
+            r = st.authorize(method="GET", path="/api/state",
+                             headers=_hdr(Cookie=pair),
+                             client_ip="127.0.0.1", loopback=True)
+            check("改密：旧会话全部失效", r.status == 401, str(r.status))
+            sess2, _ = st.login("newpassword123", client_ip="127.0.0.1")
+            check("改密：新口令可登录", sess2.scope == "write")
+
+FAILS: list[str] = []
+
+
+def check(name: str, cond: bool, detail: str = "") -> bool:
+    enc = sys.stdout.encoding or "utf-8"
+    line = f"  [{'PASS' if cond else 'FAIL'}] {name}" + (f"  {detail}" if detail else "")
+    print(line.encode(enc, "replace").decode(enc, "replace"))
+    if not cond:
+        FAILS.append(name)
+    return bool(cond)
+
+
+class PasswordTests(unittest.TestCase):
+    def test_roundtrip_and_reject(self):
+        rec = passwords.hash_password("correct horse battery staple")
+        check("口令：正确口令通过", passwords.verify_password("correct horse battery staple", rec))
+        check("口令：错误口令拒绝", not passwords.verify_password("wrong", rec))
+        check("口令：记录不含明文", "correct horse" not in json.dumps(rec))
+        bad = dict(rec, hash=rec["hash"][:-2] + "AA")
+        check("口令：篡改哈希拒绝", not passwords.verify_password("correct horse battery staple", bad))
+        check("口令：空口令拒绝", not passwords.verify_password("", rec))
+
+    def test_needs_rehash(self):
+        rec = passwords.hash_password("x")
+        check("口令：当前参数不需重哈希", not passwords.needs_rehash(rec))
+        check("口令：旧参数建议重哈希", passwords.needs_rehash(dict(rec, n=1024)))
+
+
+class SessionTests(unittest.TestCase):
+    def _store(self):
+        now = [1000.0]
+        store = sessions.SessionStore(b"k" * 32, ttl_s=60, max_age_s=3600,
+                                      clock=lambda: now[0])
+        return store, now
+
+    def test_cookie_roundtrip_and_forgery(self):
+        store, _ = self._store()
+        sess, cookie = store.create("write", listener="local")
+        got = store.get(cookie)
+        check("会话：Cookie 可取回", got is not None and got.sid == sess.sid)
+        mid = len(cookie) // 2
+        forged = cookie[:mid] + ("A" if cookie[mid] != "A" else "B") + cookie[mid + 1:]
+        check("会话：篡改 Cookie 拒绝", store.get(forged) is None)
+        check("会话：乱码 Cookie 拒绝", store.get("not-a-cookie") is None)
+
+    def test_expiry_and_max_age(self):
+        store, now = self._store()
+        _, cookie = store.create("read")
+        now[0] += 61
+        check("会话：TTL 过期拒绝", store.get(cookie) is None)
+        store2, now2 = self._store()
+        _, cookie2 = store2.create("read")
+        now2[0] += 61
+        # 每 30s 续期一次仍应超过 max_age 后被回收
+        for _ in range(130):
+            now2[0] += 30
+            store2.get(cookie2)
+        check("会话：超过 max_age 回收", store2.get(cookie2) is None)
+
+    def test_revoke(self):
+        store, _ = self._store()
+        sess, cookie = store.create("write", device_id="dev-1")
+        check("会话：吊销单条", store.revoke(sess.sid) and store.get(cookie) is None)
+        store.create("write", device_id="dev-2")
+        store.create("write", device_id="dev-2")
+        check("会话：按设备吊销", store.revoke_device("dev-2") == 2 and store.count() == 0)
+
+
+class AuthzTests(unittest.TestCase):
+    def test_route_table_invariants(self):
+        problems = authz.check_route_table()
+        check("路由：表自身不自检失败", problems == [], "; ".join(problems))
+        check("路由：未知路径不放行", authz.find_route("GET", "/api/nope") is None)
+        for gone in ("/api/auth", "/api/credentials", "/api/token"):
+            check(f"路由：旧通道 {gone} 已列入 GONE", gone in authz.GONE_PATHS)
+            check(f"路由：旧通道 {gone} 不再有路由", authz.find_route("POST", gone) is None)
+
+    def test_key_routes(self):
+        cases = {
+            ("GET", "/api/state"): ("read", "any"),
+            ("POST", "/api/restart"): ("write", "any"),
+            ("POST", "/api/op"): ("write", "any"),
+            ("GET", "/api/security"): ("admin", "any"),
+            ("POST", "/api/security/network"): ("admin", "local"),
+            ("POST", "/api/setup/complete"): (None, "local"),
+            ("POST", "/api/session/login"): (None, "any"),
+            ("POST", "/api/pair/complete"): (None, "network"),
+        }
+        for (method, path), (scope, listener) in cases.items():
+            route = authz.find_route(method, path)
+            ok = route is not None and route.scope == scope and route.listener == listener
+            check(f"路由：{method} {path} → {scope}/{listener}", ok,
+                  f"实际 {route.scope if route else None}/{route.listener if route else None}")
+
+    def test_mutations_declare_csrf_and_json(self):
+        for route in authz.ROUTES:
+            path = authz._sample_path(route.pattern.pattern)
+            mutating = any(m in route.methods for m in ("POST", "PUT", "PATCH", "DELETE"))
+            if not mutating or route.scope is None:
+                continue
+            if route.content_type != "json":
+                check(f"路由：{path} 写接口声明 JSON", False, str(route.content_type))
+            if not route.csrf:
+                check(f"路由：{path} 写接口声明 CSRF", False)
+        check("路由：全部写接口都有 CSRF + JSON（无失败项）", True)
+
+    def test_settings_section_policy(self):
+        check("设置：commands 段要求 admin/local", authz.settings_section_requires_admin("commands"))
+        check("设置：ui 段不升级为 admin", not authz.settings_section_requires_admin("ui"))
+
+
+class CsrfTests(unittest.TestCase):
+    def test_hosts_origins(self):
+        allowed = {"127.0.0.1:8090", "localhost:8090"}
+        check("来源：合法 Host", csrf.host_allowed("127.0.0.1:8090", allowed))
+        check("来源：大小写 Host", csrf.host_allowed("LOCALHOST:8090", allowed))
+        check("来源：伪造 Host 拒绝", not csrf.host_allowed("evil.example.com", allowed))
+        check("来源：同源 Origin",
+              csrf.origin_matches("http://127.0.0.1:8090", {"http://127.0.0.1:8090"}))
+        check("来源：异源 Origin 拒绝",
+              not csrf.origin_matches("http://evil.example", {"http://127.0.0.1:8090"}))
+        check("来源：Sec-Fetch-Site cross-site 拒绝",
+              not csrf.sec_fetch_site_ok("cross-site"))
+        check("来源：Sec-Fetch-Site same-origin 放行",
+              csrf.sec_fetch_site_ok("same-origin"))
+
+    def test_mutation_matrix(self):
+        ok, _ = csrf.mutation_allowed(
+            method="POST", origin="http://127.0.0.1:8090", sec_fetch_site="same-origin",
+            csrf_header="x", session_csrf="x",
+            allowed_origins={"http://127.0.0.1:8090"}, cookie_auth=True)
+        check("CSRF：同源 + token 通过", ok)
+        ok, _ = csrf.mutation_allowed(
+            method="POST", origin="http://evil.example", sec_fetch_site="cross-site",
+            csrf_header="", session_csrf="x",
+            allowed_origins={"http://127.0.0.1:8090"}, cookie_auth=True)
+        check("CSRF：跨源页面拒绝", not ok)
+        ok, _ = csrf.mutation_allowed(
+            method="POST", origin="http://127.0.0.1:8090", sec_fetch_site="same-origin",
+            csrf_header="", session_csrf="x",
+            allowed_origins={"http://127.0.0.1:8090"}, cookie_auth=True)
+        check("CSRF：缺 token 拒绝", not ok)
+        ok, _ = csrf.mutation_allowed(
+            method="POST", origin="", sec_fetch_site="",
+            csrf_header="", session_csrf="",
+            allowed_origins=set(), cookie_auth=False)
+        check("CSRF：Header 认证的本地脚本豁免 CSRF", ok)
+
+
+class RateLimitTests(unittest.TestCase):
+    def test_lockout_and_recover(self):
+        now = [0.0]
+        limiter = ratelimit.AttemptLimiter(window_s=60, max_failures=3,
+                                           lockout_s=30, clock=lambda: now[0])
+        for _ in range(2):
+            limiter.fail("ip")
+        check("限流：阈值内允许", limiter.allow("ip")[0])
+        limiter.fail("ip")
+        allowed, wait = limiter.allow("ip")
+        check("限流：达阈值锁定", not allowed and wait > 0)
+        now[0] += 31
+        check("限流：锁定到期恢复", limiter.allow("ip")[0])
+        limiter.success("ip")
+        check("限流：成功后清空", limiter.allow("ip")[0])
+
+
+class AuditTests(unittest.TestCase):
+    def test_masking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "security.jsonl"
+            log = audit.AuditLog(path)
+            log.write("login", ip="1.2.3.4", password="S3cret-Pass",
+                      token="abcdef1234567890", user="admin")
+            text = path.read_text(encoding="utf-8")
+            check("审计：写入事件", "login" in text and "1.2.3.4" in text)
+            check("审计：口令不落明文", "S3cret-Pass" not in text)
+            check("审计：token 不落明文", "abcdef1234567890" not in text)
+            check("审计：字段可解析", json.loads(text.strip())["event"] == "login")
+
+
+class IdentityTests(unittest.TestCase):
+    def test_node_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ident = identity.NodeIdentity(Path(tmp)).ensure()
+            data = b"pair-me"
+            sig = ident.sign(data)
+            check("身份：签名可验证", ident.verify(sig, data, ident.public_pem()))
+            check("身份：篡改数据拒绝", not ident.verify(sig, b"pair-you", ident.public_pem()))
+            check("身份：指纹 64 hex", len(ident.fingerprint()) == 64)
+
+    def test_local_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = identity.LocalToken(Path(tmp) / "local-token")
+            token = store.ensure()
+            check("本地 token：创建后可校验", store.verify(token))
+            check("本地 token：错误 token 拒绝", not store.verify("nope"))
+            rotated = store.rotate()
+            check("本地 token：轮换后旧值失效", not store.verify(token))
+            check("本地 token：轮换后新值可用", store.verify(rotated))
+
+
+def main() -> int:
+    print("=== security core selftest (1.0.1 check) ===")
+    loader = unittest.TestLoader()
+    suite = loader.loadTestsFromModule(sys.modules[__name__])
+    result = unittest.TextTestRunner(verbosity=0).run(suite)
+    check("整体：unittest 无失败", result.wasSuccessful(),
+          f"failures={len(result.failures)} errors={len(result.errors)}")
+    print(f"\n=== {'全部 PASS' if not FAILS else '存在失败'}（{len(FAILS)} 项失败）===")
+    return 0 if not FAILS else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

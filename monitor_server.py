@@ -4509,7 +4509,7 @@ def print_access_hints(host: str, port: int) -> None:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Mozunitor/1.0.0"
+    server_version = "Mozunitor/1.0.1"
     protocol_version = "HTTP/1.1"
     _session_cookie: str | None = None       # 本次响应要下发的会话 Cookie
 

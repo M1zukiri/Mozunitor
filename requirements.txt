@@ -17,3 +17,6 @@ pystray==0.19.5
 # pillow 给区间而不是锁版本：本机已有的 term-image 要求 pillow<11，这在 pillow 12.1.0
 # 时就已经不满足（与本次改动无关），锁死具体版本只会让两端来回升降级。
 pillow>=12.1
+
+# 1.1.0 安全重构：TLS 证书生成与节点签名（P1 起）
+cryptography>=42
