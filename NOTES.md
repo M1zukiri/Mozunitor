@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-11-13）
 
-- 版本 **1.0.5**（公开基线 1.0.0；安全重构 P5 检查点）。开发分支 `refactor/security`，按
+- 版本 **1.0.6**（公开基线 1.0.0；安全重构 P5 + Android 客户端检查点）。开发分支 `refactor/security`，按
   `docs/SPEC-security-hardening.md` 执行；B 位目标 **1.1.0**。
 
 ## 进度记录
@@ -42,3 +42,12 @@
   一律 401；设置页「安全」分节可配对节点/生成节点配对码/解除；节点令牌替换掉已失效的用户名+HMAC
   通道。自检：unit **139 项**、HTTP **50 项** 全 PASS（含双实例配对后 mesh 拉取、未配对 401）。
   forwards 短 TTL ticket 仍待补；Android 客户端与 P6 未做。
+- P4 客户端（C 位 **1.0.6**）：Android 端改为「配对码 → 设备 token」——`mobile/lib/main.dart`
+  用 `dart:io` 的 `badCertificateCallback` 按 SHA256 指纹钉住自签证书，token 进
+  secure storage（Keystore 不可用时回退应用私有存储并提示）；设置页改为面板地址 + 证书指纹 +
+  配对码；清单数据优先用 Bearer token，失效时退回 `/api/session/login` 换会话（应用内 WebView
+  需要 Cookie）。`dart analyze` 无问题。
+- 构建阻塞：仓库路径含非 ASCII 时 AOT 阶段 `gen_snapshot` 读路径变乱码直接失败（AGENTS 记载的
+  已知坑，`android.overridePathCheck` 只绕过配置阶段）。把 `mobile/` 复制到纯 ASCII 临时目录后
+  AOT 能过，但本机 gradle `assembleRelease`/`assembleDebug` 长时间停滞（持续低 CPU、无产物）；
+  APK 构建与真机安装验证挪到 P6，换纯 ASCII 工作路径或干净构建环境再跑。

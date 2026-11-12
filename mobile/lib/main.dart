@@ -2,11 +2,10 @@
 // 用途: Mozunitor 手机端 —— 入口启动器。清单来自面板的 /api/state，
 //       点一下就在应用内打开，不再开浏览器、不再逐个服务记地址。
 //
-// 三个页面：配置（面板地址 + 身份）→ 入口清单 → 应用内 WebView。
+// 三个页面：配置（面板地址 + 配对码）→ 入口清单 → 应用内 WebView。
 //
-// 身份沿用面板的节点凭据规则：用户名与面板一致即可查看，密码也一致才能操作。
-// 换取的是 30 天会话 Cookie，面板 API 与 TCP 转发入口都认它（monitor_server.py
-// 的 _level 与 _proxy_authorized）—— 手机因此不必接触访问 token。
+// 身份走设备配对：面板上生成一次性配对码，手机用它换设备 token（面板只存哈希）。
+// 自签 TLS 证书按指纹钉住；token 进 Android Keystore（不可用时退回应用私有存储并提示）。
 // 数据源按配置顺序探测，取第一个可达的；
 // 三个都不可达时给可操作的错误态，而不是空白页。
 
@@ -14,9 +13,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -31,18 +32,27 @@ const String kPanelsKey = 'panels';
 /// 于是每个请求都 401 而看不出原因。现在失败会如实上报并显示在配置页。
 const FlutterSecureStorage kSecrets = FlutterSecureStorage();
 
-/// 面板地址。token 单独进安全存储（它等同于访问权），不写在这里。
+/// 面板地址与证书指纹。设备 token 单独进安全存储（它等同于访问权），不写在这里。
 class PanelConfig {
   final String label;
   final String baseUrl;
 
-  const PanelConfig({required this.label, required this.baseUrl});
+  /// 自签 TLS 证书的 SHA256（大写十六进制，不带冒号）；http 面板留空。
+  final String fingerprint;
 
-  Map<String, dynamic> toJson() => {'label': label, 'baseUrl': baseUrl};
+  const PanelConfig({
+    required this.label,
+    required this.baseUrl,
+    this.fingerprint = '',
+  });
+
+  Map<String, dynamic> toJson() =>
+      {'label': label, 'baseUrl': baseUrl, 'fingerprint': fingerprint};
 
   static PanelConfig fromJson(Map<String, dynamic> j) => PanelConfig(
         label: (j['label'] ?? '').toString(),
         baseUrl: (j['baseUrl'] ?? '').toString(),
+        fingerprint: (j['fingerprint'] ?? '').toString(),
       );
 }
 
@@ -140,8 +150,75 @@ Future<bool> savePassword(String password) async =>
 /// 会话按面板地址分别存：Cookie 本身不带端口，但每台面板各自签发自己的会话。
 String sessionKey(String baseUrl) => 'session:$baseUrl';
 
-/// 登录结果。失败时 error 直接用面板回的那句话 —— 它区分「用户名不一致」与
-/// 「密码不一致」，这正是用户能自己修的两件不同的事。
+/// 设备 token 的存储键：每个面板一份。
+String deviceTokenKey(String baseUrl) => 'device:$baseUrl';
+
+/// 按指纹钉住自签证书的 HTTP 客户端。指纹为空时只允许系统信任的证书链。
+http.Client tlsClient(String fingerprint) {
+  final hc = HttpClient();
+  final want = fingerprint.replaceAll(':', '').trim().toUpperCase();
+  if (want.isNotEmpty) {
+    hc.badCertificateCallback = (cert, host, port) {
+      final got = crypto.sha256.convert(cert.der).toString().toUpperCase();
+      return got == want;
+    };
+  }
+  return IOClient(hc);
+}
+
+/// 配对结果。
+class PairResult {
+  final bool ok;
+  final String error;
+
+  const PairResult({required this.ok, required this.error});
+}
+
+/// 用一次性配对码换设备 token；token 只进安全存储，面板侧只保存哈希。
+Future<PairResult> pairPanel(
+    PanelConfig panel, String code, String deviceName) async {
+  final base = normalizeBaseUrl(panel.baseUrl);
+  final client = tlsClient(panel.fingerprint);
+  try {
+    final res = await client
+        .post(
+          Uri.parse('$base/api/pair/complete'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'code': code.trim().toUpperCase(),
+            'name': deviceName.isEmpty ? '手机' : deviceName,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      var msg = 'HTTP ${res.statusCode}';
+      try {
+        final j = jsonDecode(utf8.decode(res.bodyBytes));
+        if (j is Map && j['error'] is String) msg = j['error'] as String;
+      } catch (_) {}
+      return PairResult(ok: false, error: msg);
+    }
+    final j = jsonDecode(utf8.decode(res.bodyBytes));
+    final token = (j is Map ? j['token'] : null) as String?;
+    if (token == null || token.isEmpty) {
+      return const PairResult(ok: false, error: '面板没有下发设备 token');
+    }
+    await writeSecret(deviceTokenKey(base), token);
+    return const PairResult(ok: true, error: '');
+  } on TimeoutException {
+    return const PairResult(ok: false, error: '配对超时（手机和面板在同一网络吗）');
+  } on HandshakeException catch (e) {
+    return PairResult(ok: false, error: 'TLS 握手失败：${e.message}（指纹是否填对）');
+  } on SocketException catch (e) {
+    return PairResult(ok: false, error: '连不上：${e.osError?.message ?? e.message}');
+  } catch (e) {
+    return PairResult(ok: false, error: '${e.runtimeType}: $e');
+  } finally {
+    client.close();
+  }
+}
+
+/// 登录结果。密码登录只用于应用内 WebView 的会话兼容；清单数据优先用设备 token。
 class LoginResult {
   final bool ok;
   final String cookie;
@@ -150,30 +227,35 @@ class LoginResult {
   const LoginResult({required this.ok, required this.cookie, required this.error});
 }
 
-/// 用用户名密码换会话。只给用户名也能换到只读会话（面板允许留空密码），
-/// 所以「不填密码 = 只能看」这条路是通的。
-Future<LoginResult> panelLogin(String base, String user, String password) async {
-  final res = await http
-      .post(
-        Uri.parse('$base/api/auth'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'user': user, 'password': password}),
-      )
-      .timeout(const Duration(seconds: 8));
-  if (res.statusCode != 200) {
-    var msg = 'HTTP ${res.statusCode}';
-    try {
-      final j = jsonDecode(utf8.decode(res.bodyBytes));
-      if (j is Map && j['error'] is String) msg = j['error'] as String;
-    } catch (_) {}
-    return LoginResult(ok: false, cookie: '', error: msg);
+/// 用管理员口令换会话 Cookie（1.1.0 的 /api/session/login）。
+Future<LoginResult> panelLogin(
+    String base, String password, String fingerprint) async {
+  final client = tlsClient(fingerprint);
+  try {
+    final res = await client
+        .post(
+          Uri.parse('$base/api/session/login'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'password': password}),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) {
+      var msg = 'HTTP ${res.statusCode}';
+      try {
+        final j = jsonDecode(utf8.decode(res.bodyBytes));
+        if (j is Map && j['error'] is String) msg = j['error'] as String;
+      } catch (_) {}
+      return LoginResult(ok: false, cookie: '', error: msg);
+    }
+    final setCookie = res.headers['set-cookie'] ?? '';
+    final m = RegExp(r'mozunitor_session=([^;,\s]+)').firstMatch(setCookie);
+    if (m == null) {
+      return const LoginResult(ok: false, cookie: '', error: '面板没有下发会话 Cookie');
+    }
+    return LoginResult(ok: true, cookie: 'mozunitor_session=${m.group(1)}', error: '');
+  } finally {
+    client.close();
   }
-  final setCookie = res.headers['set-cookie'] ?? '';
-  final m = RegExp(r'mozunitor_session=([^;,\s]+)').firstMatch(setCookie);
-  if (m == null) {
-    return const LoginResult(ok: false, cookie: '', error: '面板没有下发会话 Cookie');
-  }
-  return LoginResult(ok: true, cookie: 'mozunitor_session=${m.group(1)}', error: '');
 }
 
 void main() => runApp(const MozunitorApp());
@@ -283,11 +365,21 @@ class _HomePageState extends State<HomePage> {
     if (!identical(old.panels, widget.panels)) refresh();
   }
 
-  /// 面板 API 一律靠会话 Cookie 鉴权；没有会话时不带 Cookie，让 401 去触发登录。
-  Future<http.Response> _fetchState(String base, String cookie) => http
-      .get(Uri.parse('$base/api/state'),
-          headers: {if (cookie.isNotEmpty) 'Cookie': cookie})
-      .timeout(const Duration(seconds: 6));
+  /// 优先用设备 token（Bearer）；没有或失效时退回口令换会话（应用内 WebView 需要 Cookie）。
+  Future<http.Response> _fetchState(
+      String base, String fingerprint, String token, String cookie) async {
+    final client = tlsClient(fingerprint);
+    try {
+      final headers = <String, String>{};
+      if (token.isNotEmpty) headers['Authorization'] = 'Bearer $token';
+      if (cookie.isNotEmpty) headers['Cookie'] = cookie;
+      return await client
+          .get(Uri.parse('$base/api/state'), headers: headers)
+          .timeout(const Duration(seconds: 6));
+    } finally {
+      client.close();
+    }
+  }
 
   Future<void> refresh() async {
     setState(() {
@@ -295,7 +387,7 @@ class _HomePageState extends State<HomePage> {
       _error = null;
     });
     // 逐面板记下「为什么不行」。合并成一句「不可达」会同时误导用户和我：
-    // token 不对、地址写错、手机不在同一网络，是三件完全不同的事。
+    // token 失效、地址写错、手机不在同一网络，是三件完全不同的事。
     final problems = <String>[];
 
     for (final panel in widget.panels) {
@@ -310,27 +402,26 @@ class _HomePageState extends State<HomePage> {
         continue;
       }
       try {
-        final user = await storedUser();
-        if (user.isEmpty) {
-          problems.add('${panel.label}：还没填身份（用户名）');
-          continue;
-        }
-        // 先拿已有会话试一次；过期或压根没有，就现场登录换一张。
+        var token = await readSecret(deviceTokenKey(base)) ?? '';
         var cookie = await readSecret(sessionKey(base)) ?? '';
-        var res = await _fetchState(base, cookie);
+        var res = await _fetchState(base, panel.fingerprint, token, cookie);
         if (res.statusCode == 401 || res.statusCode == 403) {
-          final login = await panelLogin(base, user, await storedPassword());
-          if (!login.ok) {
-            problems.add('${panel.label}：${login.error}');
-            continue;
+          final password = await storedPassword();
+          if (password.isNotEmpty) {
+            final login = await panelLogin(base, password, panel.fingerprint);
+            if (login.ok) {
+              cookie = login.cookie;
+              await writeSecret(sessionKey(base), cookie);
+            }
           }
-          cookie = login.cookie;
-          await writeSecret(sessionKey(base), cookie);
-          res = await _fetchState(base, cookie);
+          if (cookie.isNotEmpty) {
+            res = await _fetchState(base, panel.fingerprint, '', cookie);
+          }
         }
-        debugPrint('GET $base/api/state  会话=${cookie.length}字  -> HTTP ${res.statusCode}');
+        debugPrint('GET $base/api/state  会话=${cookie.length}字 令牌=${token.length}字'
+            '  -> HTTP ${res.statusCode}');
         if (res.statusCode == 401 || res.statusCode == 403) {
-          problems.add('${panel.label}：凭据被拒（HTTP ${res.statusCode}）');
+          problems.add('${panel.label}：需要重新配对或输入口令（HTTP ${res.statusCode}）');
           continue;
         }
         if (res.statusCode != 200) {
@@ -356,6 +447,8 @@ class _HomePageState extends State<HomePage> {
         problems.add('${panel.label}：6 秒没有响应（手机和它在同一网络吗）');
       } on SocketException catch (e) {
         problems.add('${panel.label}：连不上（${e.osError?.message ?? e.message}）');
+      } on HandshakeException {
+        problems.add('${panel.label}：TLS 证书校验失败（检查指纹）');
       } on FormatException {
         problems.add('${panel.label}：响应不是合法 JSON');
       } catch (e) {
@@ -367,7 +460,7 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _loading = false;
       _error = problems.isEmpty
-          ? '没有配置任何面板，请到设置里填面板地址与身份。'
+          ? '没有配置任何面板，请到设置里配对面板。'
           : '都连不上：\n\n${problems.join('\n')}';
     });
   }
@@ -471,7 +564,7 @@ class _HomePageState extends State<HomePage> {
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(vertical: 8),
         itemCount: _entries.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (context, i) {
           final e = _entries[i];
           final up = e.status == 'up';
@@ -678,10 +771,13 @@ class SetupPage extends StatefulWidget {
 
 class _SetupPageState extends State<SetupPage> {
   late List<TextEditingController> _urls;
+  late List<TextEditingController> _fps;
+  late List<TextEditingController> _codes;
   late List<String> _labels;
-  late final TextEditingController _user;
+  late final TextEditingController _deviceName;
   late final TextEditingController _password;
   String? _error;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -692,33 +788,33 @@ class _SetupPageState extends State<SetupPage> {
         i < kDefaultPanels.length ? kDefaultPanels[i].label : '面板 ${i + 1}',
     ];
     _urls = panels.map((p) => TextEditingController(text: p.baseUrl)).toList();
-    _user = TextEditingController();
+    _fps = panels.map((p) => TextEditingController(text: p.fingerprint)).toList();
+    _codes = panels.map((_) => TextEditingController()).toList();
+    _deviceName = TextEditingController(text: '手机');
     _password = TextEditingController();
-    _loadIdentity();
+    _load();
   }
 
-  Future<void> _loadIdentity() async {
-    final user = await storedUser();
+  Future<void> _load() async {
     final password = await storedPassword();
     if (!mounted) return;
-    setState(() {
-      _user.text = user;
-      _password.text = password;
-    });
+    setState(() => _password.text = password);
   }
 
   @override
   void dispose() {
-    for (final c in _urls) {
+    for (final c in [..._urls, ..._fps, ..._codes]) {
       c.dispose();
     }
-    _user.dispose();
+    _deviceName.dispose();
     _password.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     final panels = <PanelConfig>[];
+    final codes = <String>[];
     for (var i = 0; i < _urls.length; i++) {
       final url = normalizeBaseUrl(_urls[i].text);
       if (url.isEmpty) continue;
@@ -727,32 +823,32 @@ class _SetupPageState extends State<SetupPage> {
         setState(() => _error = '「${_labels[i]}」的地址看起来不对：$url');
         return;
       }
-      panels.add(PanelConfig(label: _labels[i], baseUrl: url));
+      final fp = _fps[i].text.replaceAll(':', '').trim().toUpperCase();
+      panels.add(PanelConfig(label: _labels[i], baseUrl: url, fingerprint: fp));
+      codes.add(_codes[i].text.trim().toUpperCase());
     }
-    final user = _user.text.trim();
-    if (user.isEmpty) {
-      setState(() => _error = '用户名不能为空 —— 它要与面板的节点凭据一致。');
+    if (panels.isEmpty) {
+      setState(() => _error = '至少填一个面板地址。');
       return;
     }
-    await saveUser(user);
-    final encrypted = await savePassword(_password.text);
-    // 换了身份就作废旧会话：留着它等于换个用户名继续用上一个人的权限。
-    final prefs = await SharedPreferences.getInstance();
-    for (final p in panels) {
-      try {
-        await kSecrets.delete(key: sessionKey(p.baseUrl));
-      } catch (_) {}
-      await prefs.remove('$kTokenFallbackPrefix${sessionKey(p.baseUrl)}');
-    }
+    if (_password.text.isNotEmpty) await savePassword(_password.text);
     await savePanels(panels);
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    final failed = <String>[];
+    for (var i = 0; i < panels.length; i++) {
+      final code = codes[i];
+      if (code.isEmpty) continue;
+      final r = await pairPanel(panels[i], code, _deviceName.text.trim());
+      if (!r.ok) failed.add('${panels[i].label}：${r.error}');
+    }
     if (!mounted) return;
-    if (!encrypted) {
-      // 功能可用，但安全级别降了 —— 如实说，别让用户以为一切照旧。
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        duration: Duration(seconds: 10),
-        content: Text('这台设备的安全存储不可用（Android Keystore 报错），'
-            '密码已存到应用私有数据：其它应用读不到，但没有硬件级加密。'),
-      ));
+    setState(() => _saving = false);
+    if (failed.isNotEmpty) {
+      setState(() => _error = '配对失败：\n${failed.join('\n')}');
+      return;
     }
     Navigator.of(context).pop(panels);
   }
@@ -765,18 +861,16 @@ class _SetupPageState extends State<SetupPage> {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
           Text(
-            '身份与面板的节点凭据一致：用户名相同就能查看，密码也相同才能操作服务。'
-            '密码留空则只能看。',
+            '在面板的「设置 → 安全 → 设备配对」里生成配对码，填到下面即可。'
+            '自签证书需要填面板显示的 SHA256 指纹（可只填十六进制，冒号可省略）。',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 16),
-          Text('身份', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 6),
           TextField(
-            controller: _user,
+            controller: _deviceName,
             autocorrect: false,
             decoration: const InputDecoration(
-              labelText: '用户名',
+              labelText: '设备名（面板上显示）',
               border: OutlineInputBorder(),
             ),
           ),
@@ -786,12 +880,12 @@ class _SetupPageState extends State<SetupPage> {
             obscureText: true,
             autocorrect: false,
             decoration: const InputDecoration(
-              labelText: '密码（留空则只读）',
+              labelText: '管理员口令（可选，仅应用内网页需要）',
               border: OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 22),
-          Text('面板地址（按顺序探测，取第一个可达的）',
+          Text('面板（按顺序探测，取第一个可达的）',
               style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 10),
           for (var i = 0; i < _urls.length; i++) ...[
@@ -800,12 +894,30 @@ class _SetupPageState extends State<SetupPage> {
               keyboardType: TextInputType.url,
               autocorrect: false,
               decoration: InputDecoration(
-                labelText: _labels[i],
-                hintText: 'http://10.0.0.2:8090',
+                labelText: '${_labels[i]} 地址',
+                hintText: 'https://10.0.0.2:8443',
                 border: const OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _fps[i],
+              autocorrect: false,
+              decoration: const InputDecoration(
+                labelText: '证书指纹 SHA256（http 面板留空）',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _codes[i],
+              autocorrect: false,
+              decoration: const InputDecoration(
+                labelText: '配对码（已配对过则留空）',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
           ],
           if (_error != null) ...[
             Container(
@@ -819,7 +931,10 @@ class _SetupPageState extends State<SetupPage> {
             ),
             const SizedBox(height: 12),
           ],
-          FilledButton(onPressed: _save, child: const Text('保存')),
+          FilledButton(
+            onPressed: _saving ? null : _save,
+            child: Text(_saving ? '配对中…' : '保存'),
+          ),
         ],
       ),
     );
