@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-11-13）
 
-- 版本 **1.0.3**（公开基线 1.0.0；安全重构 P3 检查点）。开发分支 `refactor/security`，按
+- 版本 **1.0.4**（公开基线 1.0.0；安全重构 P4 检查点）。开发分支 `refactor/security`，按
   `docs/SPEC-security-hardening.md` 执行；B 位目标 **1.1.0**。
 
 ## 进度记录
@@ -30,3 +30,9 @@
   绑定、CIDR、指纹、活动会话、改口令）；管理员口令登录签发 admin 会话。自检：unit **108 项**、
   HTTP **35 项** 全 PASS；Playwright：设置页安全分节可见、开启 HTTPS 后指纹展示、非白名单来源 403、
   配置写回验证通过。
+- P4（C 位 **1.0.4**）：设备配对 —— `mozunitor/security/pairing.py`（一次性配对码 5 分钟 TTL、
+  设备记录只存 token 哈希、吊销）；`SecurityState` 接受 `Authorization: Bearer` /
+  `X-Mozunitor-Device-Token` 设备 token（read/write），配对与吊销写审计；`/api/devices`、
+  `/api/pair/start`、`/api/pair/complete`、`/api/devices/revoke` 上线；设置页「安全」分节可生成
+  配对码、查看与吊销设备。自检：unit **128 项**、HTTP **42 项** 全 PASS；Playwright：配对区可见、
+  配对码生成展示、无 JS 异常。Android 端（扫码/钉证书/Keystore/多面板）与 P5、P6 未做。

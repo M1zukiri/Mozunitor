@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import authz, csrf
+from . import authz, csrf, pairing
 from .audit import AuditLog
 from .identity import LocalToken, NodeIdentity, harden_file, random_token
 from .passwords import hash_password, needs_rehash, verify_password
@@ -44,6 +44,7 @@ class AuthResult:
     session: Session | None = None
     route: authz.Route | None = None
     via: str = ""
+    device_id: str = ""
     retry_after: float = 0.0
 
 
@@ -71,6 +72,8 @@ class SecurityState:
     sessions: SessionStore = field(init=False)
     limiter: AttemptLimiter = field(init=False)
     audit: AuditLog = field(init=False)
+    devices: pairing.DeviceStore = field(init=False)
+    pair_codes: pairing.PairCodes = field(init=False)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
@@ -80,6 +83,8 @@ class SecurityState:
         self.identity = NodeIdentity(self.state_dir).ensure()
         self.local_token = LocalToken(self.state_dir / "local-token")
         self.local_token.ensure()
+        self.devices = pairing.DeviceStore(self.state_dir / "devices.json")
+        self.pair_codes = pairing.PairCodes()
         secret = self._load_secret(self.state_dir / "session-secret")
         self.sessions = SessionStore(secret, ttl_s=self.ttl_s, max_age_s=self.max_age_s,
                                      clock=self.clock)
@@ -203,6 +208,12 @@ class SecurityState:
             supplied = headers.get("X-Mozunitor-Local-Token") or ""
             if supplied and self.local_token.verify(supplied):
                 return AuthResult(scope="admin", via="local-token")
+        device_token = pairing.bearer_token(headers)
+        if device_token:
+            device = self.devices.verify(device_token)
+            if device is not None:
+                return AuthResult(scope=str(device.get("scope") or "read"),
+                                  via="device", device_id=str(device.get("id") or ""))
         session = self.sessions.get(self._cookie_from_headers(headers))
         if session is not None:
             return AuthResult(scope=session.scope, session=session, via="session")
@@ -355,6 +366,35 @@ class SecurityState:
             self.network = cfg
             self.net_port = int(cfg.port)
 
+    # ---------------------------------------------------------------- 配对
+    def start_pairing(self, *, client_ip: str) -> dict:
+        code, expires = self.pair_codes.issue()
+        self.audit.write("pair_started", ip=client_ip)
+        return {"code": code, "expires_at": expires, "ttl_s": self.pair_codes.ttl_s}
+
+    def complete_pairing(self, code: str, name: str, fingerprint: str = "",
+                         *, client_ip: str, ua: str = "") -> tuple[dict, str]:
+        key = f"pair:{client_ip}"
+        allowed, wait = self.limiter.allow(key)
+        if not allowed:
+            raise AuthError(429, "配对尝试过于频繁，请稍后再试", retry_after=wait)
+        if not self.pair_codes.redeem(code):
+            self.limiter.fail(key)
+            self.audit.write("pair_failed", ip=client_ip, ua=ua)
+            raise AuthError(403, "配对码不正确或已过期")
+        device, token = self.devices.register(name, fingerprint=fingerprint, scope="write")
+        self.limiter.success(key)
+        self.audit.write("pair_completed", ip=client_ip, ua=ua, device=device["id"])
+        return device, token
+
+    def revoke_device(self, device_id: str, *, client_ip: str) -> None:
+        if not self.devices.revoke(device_id):
+            raise AuthError(404, "设备不存在或已吊销")
+        self.audit.write("device_revoked", ip=client_ip, device=device_id)
+
+    def devices_snapshot(self) -> dict:
+        return {"devices": self.devices.list()}
+
     def snapshot(self) -> dict:
         net = self.network or NetworkConfig()
         return {
@@ -365,4 +405,5 @@ class SecurityState:
             "identity_fingerprint": self.identity.fingerprint(),
             "network": net.snapshot(),
             "net_port": self.net_port,
+            "devices": self.devices.list(),
         }

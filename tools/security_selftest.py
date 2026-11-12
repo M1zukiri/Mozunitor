@@ -25,8 +25,8 @@ if str(ROOT) not in sys.path:
 
 from mozunitor import tls as mtls  # noqa: E402
 from mozunitor.net import listeners  # noqa: E402
-from mozunitor.security import (audit, authz, csrf, identity, passwords,
-                                ratelimit, sessions)  # noqa: E402
+from mozunitor.security import (audit, authz, csrf, identity, pairing,
+                                passwords, ratelimit, sessions)  # noqa: E402
 from mozunitor.security import state as security_state  # noqa: E402
 
 
@@ -461,8 +461,81 @@ class NetworkStateTests(unittest.TestCase):
             check("网络：未开启时网络入口 403", r.status == 403, str(r.status))
 
 
+class PairingTests(unittest.TestCase):
+    def test_pair_codes(self):
+        now = [1000.0]
+        codes = pairing.PairCodes(ttl_s=60, clock=lambda: now[0])
+        code, expires = codes.issue()
+        check("配对：码长度", len(code) == pairing.PAIR_CODE_LEN)
+        check("配对：过期时间", expires == 1060.0)
+        check("配对：错误码拒绝", not codes.redeem("WRONG000"))
+        check("配对：正确码一次性", codes.redeem(code) and not codes.redeem(code))
+        code2, _ = codes.issue()
+        now[0] += 61
+        check("配对：过期码拒绝", not codes.redeem(code2))
+
+    def test_device_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = pairing.DeviceStore(Path(tmp) / "devices.json")
+            device, token = store.register("手机", fingerprint="fp", scope="write")
+            check("配对：token 前缀", token.startswith("mozd_"))
+            check("配对：返回记录不含 token", "token" not in device)
+            check("配对：token 可校验", (store.verify(token) or {}).get("id") == device["id"])
+            check("配对：错误 token 拒绝", store.verify("mozd_deadbeef") is None)
+            text = (Path(tmp) / "devices.json").read_text(encoding="utf-8")
+            check("配对：文件不存明文 token", token not in text and "token_hash" in text)
+            check("配对：吊销成功", store.revoke(device["id"]))
+            check("配对：吊销后拒绝", store.verify(token) is None)
+            check("配对：列表隐藏哈希", all("token_hash" not in d for d in store.list()))
+
+    def test_state_pair_flow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            st = security_state.SecurityState(Path(tmp), port=8097, lockout_s=30)
+            st.setup_code = "SETUP-TEST"
+            st.complete_setup("password123", "SETUP-TEST", client_ip="127.0.0.1")
+            issued = st.start_pairing(client_ip="127.0.0.1")
+            check("配对：生成配对码", bool(issued.get("code")))
+            try:
+                st.complete_pairing("WRONG", "手机", client_ip="10.0.0.5")
+                check("配对：错误码拒绝", False)
+            except security_state.AuthError as exc:
+                check("配对：错误码拒绝", exc.status == 403)
+            device, token = st.complete_pairing(issued["code"], "手机", "fp-1",
+                                                client_ip="10.0.0.5")
+            check("配对：完成并下发 token", token.startswith("mozd_"))
+            hdr = _hdr(Authorization="Bearer " + token)
+            r = st.authorize(method="GET", path="/api/state", headers=hdr,
+                             client_ip="127.0.0.1", loopback=True)
+            check("配对：设备 token 可读", r.status == 200 and r.via == "device",
+                  f"{r.status}/{r.via}")
+            r = st.authorize(method="GET", path="/api/security", headers=hdr,
+                             client_ip="127.0.0.1", loopback=True)
+            check("配对：设备 token 进不了 admin", r.status == 403, str(r.status))
+            st.revoke_device(device["id"], client_ip="127.0.0.1")
+            r = st.authorize(method="GET", path="/api/state", headers=hdr,
+                             client_ip="127.0.0.1", loopback=True)
+            check("配对：吊销后 401", r.status == 401, str(r.status))
+
+    def test_pair_complete_rate_limited(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            st = security_state.SecurityState(Path(tmp), port=8097, lockout_s=30,
+                                              login_max_failures=2, login_window_s=60)
+            st.setup_code = "SETUP-TEST"
+            st.complete_setup("password123", "SETUP-TEST", client_ip="127.0.0.1")
+            for _ in range(2):
+                try:
+                    st.complete_pairing("WRONG", "手机", client_ip="10.0.0.5")
+                except security_state.AuthError:
+                    pass
+            try:
+                st.complete_pairing("WRONG", "手机", client_ip="10.0.0.5")
+                check("配对：失败限流 429", False)
+            except security_state.AuthError as exc:
+                check("配对：失败限流 429", exc.status == 429, str(exc.status))
+
+
 def main() -> int:
-    print("=== security core selftest (1.0.3 check) ===")
+    print("=== security core selftest (1.0.4 check) ===")
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromModule(sys.modules[__name__])
     result = unittest.TextTestRunner(verbosity=0).run(suite)

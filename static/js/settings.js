@@ -136,6 +136,11 @@ function securitySection() {
   const net = SEC.network || {};
   const fp = net.tls_fingerprint_pretty || '未生成（开启网络入口后生成）';
   const cidrs = (net.allowed_cidrs || []).join(', ');
+  const devices = (SEC.devices || []).map((d) =>
+    `<div class="pref-row"><span class="pref-name">${esc(d.name)}</span>`
+    + `<span class="pref-note">${d.revoked ? '已吊销' : esc(d.scope || '')}</span>`
+    + (d.revoked ? '' : `<button class="ghost" data-revoke-device="${esc(d.id)}">吊销</button>`)
+    + '</div>').join('');
   const sessions = (SEC.sessions || []).map((s) =>
     `<div class="pref-row"><span class="pref-name">${esc(s.listener)} · ${esc(s.scope)}`
     + ` …${esc(s.sid || '')}</span>`
@@ -171,7 +176,16 @@ function securitySection() {
       <label class="pref-row"><span class="pref-name">新口令（至少 8 位）</span>
         <input type="password" data-pw="new" autocomplete="new-password"></label>
     </div>
-    <button type="button" data-save-password="1">修改口令</button>`;
+    <button type="button" data-save-password="1">修改口令</button>
+    <h3 class="sec">设备配对</h3>
+    <p class="hint">先开启 HTTPS 网络入口。手机端填面板地址并输入配对码；开启 TLS 后证书指纹随配对信息一起出示。</p>
+    <div class="pref-list">
+      <div class="pref-row"><span class="pref-name">配对码</span>
+        <span class="pref-note" id="pair-code">未生成</span></div>
+    </div>
+    <button type="button" data-start-pair="1">生成配对码</button>
+    <h3 class="sec">已配对设备</h3>
+    <div class="pref-list">${devices || '<div class="empty">还没有配对设备</div>'}</div>`;
 }
 
 function netValues(extra) {
@@ -224,10 +238,47 @@ async function savePassword() {
   }
 }
 
+async function startPair() {
+  try {
+    const r = await authFetch('/api/pair/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    const el = document.querySelector('#pair-code');
+    if (el) el.textContent = d.code + '（' + Math.round((d.expires_in || 300) / 60) + ' 分钟内有效）';
+    toast('配对码已生成：' + d.code, 'ok');
+  } catch (e) {
+    toast(`生成配对码失败：${e}`, 'bad');
+  }
+}
+
+async function revokeDevice(id) {
+  try {
+    const r = await authFetch('/api/devices/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    SEC = Object.assign({}, SEC, { devices: d.devices || [] });
+    renderSettings();
+    toast('设备已吊销', 'ok');
+  } catch (e) {
+    toast(`吊销失败：${e}`, 'bad');
+  }
+}
+
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-save-network]')) { saveNetwork(netValues()); return; }
   if (e.target.closest('[data-rotate-cert]')) { saveNetwork(netValues({ rotate_cert: true })); return; }
-  if (e.target.closest('[data-save-password]')) savePassword();
+  if (e.target.closest('[data-save-password]')) { savePassword(); return; }
+  if (e.target.closest('[data-start-pair]')) { startPair(); return; }
+  const rev = e.target.closest('[data-revoke-device]');
+  if (rev) revokeDevice(rev.dataset.revokeDevice);
 });
 
 export function renderSettings() {

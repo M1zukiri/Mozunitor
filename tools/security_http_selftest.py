@@ -88,7 +88,7 @@ class Client:
 
 
 def main() -> int:
-    print("=== security http selftest (1.0.3 check) ===")
+    print("=== security http selftest (1.0.4 check) ===")
     tmp = Path(tempfile.mkdtemp(prefix="mozu-p2-"))
     cfg = tmp / "services.json"
     state = tmp / "state"
@@ -241,6 +241,35 @@ def main() -> int:
         check("凭据：security.json 不含明文口令", PASSWORD not in text)
         check("凭据：不存在旧 credentials.json", not (state / "credentials.json").exists())
         check("凭据：不存在旧 access-tokens.json", not (state / "access-tokens.json").exists())
+        code, _, body = admin.req("POST", "/api/pair/start", body={},
+                                  headers={"X-Mozunitor-Local-Token": tok})
+        d = json.loads(body)
+        pair_code = d.get("code") or ""
+        check("配对：生成一次性码", code == 200 and len(pair_code) == 8, str(code))
+        check("配对：随码给出指纹",
+              (d.get("pair") or {}).get("fingerprint") == fp)
+
+        dev = Client(f"https://127.0.0.1:{PORT_NET}", ssl._create_unverified_context())
+        code, _, body = dev.req("POST", "/api/pair/complete",
+                                body={"code": pair_code, "name": "手机",
+                                      "fingerprint": "test-fp"})
+        d = json.loads(body)
+        device_token = d.get("token") or ""
+        device_id = (d.get("device") or {}).get("id") or ""
+        check("配对：完成并下发设备 token",
+              code == 200 and device_token.startswith("mozd_"), str(code))
+        code, _, _ = dev.req("GET", "/api/state",
+                             headers={"Authorization": "Bearer " + device_token})
+        check("配对：设备 token 可读状态", code == 200, str(code))
+        code, _, _ = dev.req("GET", "/api/security",
+                             headers={"Authorization": "Bearer " + device_token})
+        check("配对：设备 token 进不了 admin", code == 403, str(code))
+        code, _, body = admin.req("POST", "/api/devices/revoke", body={"id": device_id},
+                                  headers={"X-Mozunitor-Local-Token": tok})
+        check("配对：吊销设备", code == 200, str(code))
+        code, _, _ = dev.req("GET", "/api/state",
+                             headers={"Authorization": "Bearer " + device_token})
+        check("配对：吊销后 401", code == 401, str(code))
     finally:
         proc.terminate()
         try:

@@ -191,7 +191,7 @@ SECURITY = SecurityState(
     login_max_failures=int(_SECURITY_CFG.get("login_max_failures", 5)),
     lockout_s=int(_SECURITY_CFG.get("lockout_s", 300)),
 )
-SERVER_VERSION = "Mozunitor/1.0.3"
+SERVER_VERSION = "Mozunitor/1.0.4"
 
 
 # 远端 Ollama 的模型状态：直接走 HTTP，不经 SSH。expires_at 是绝对时间戳、倒计时由前端算，
@@ -4820,6 +4820,40 @@ class Handler(BaseHTTPRequestHandler):
             NETWORK_CFG.snapshot(), tls_fingerprint=TLS_FINGERPRINT,
             tls_fingerprint_pretty=mtls.format_fingerprint(TLS_FINGERPRINT))})
 
+    def _handle_pair_start(self) -> None:
+        if not NETWORK_CFG.enabled:
+            self._send(400, {"error": "先开启网络入口（HTTPS）再配对设备"})
+            return
+        issued = SECURITY.start_pairing(client_ip=self._client_ip())
+        base = f"https://{NETWORK_CFG.bind}:{NETWORK_CFG.port}/"
+        pair = {"url": base, "fingerprint": TLS_FINGERPRINT, "code": issued["code"],
+                "node": {"id": NODE_ID, "name": NODE_NAME},
+                "expires_at": issued["expires_at"]}
+        self._send(200, {"ok": True, "code": issued["code"],
+                         "expires_in": int(issued["ttl_s"]), "pair": pair})
+
+    def _handle_pair_complete(self, payload: dict) -> None:
+        try:
+            device, token = SECURITY.complete_pairing(
+                str(payload.get("code") or ""), str(payload.get("name") or "手机"),
+                str(payload.get("fingerprint") or ""),
+                client_ip=self._client_ip(), ua=self._ua())
+        except SecurityAuthError as exc:
+            self._auth_error(exc)
+            return
+        self._send(200, {"ok": True, "device": device, "token": token,
+                         "node": {"id": NODE_ID, "name": NODE_NAME},
+                         "version": SERVER_VERSION})
+
+    def _handle_device_revoke(self, payload: dict) -> None:
+        try:
+            SECURITY.revoke_device(str(payload.get("id") or ""),
+                                   client_ip=self._client_ip())
+        except SecurityAuthError as exc:
+            self._auth_error(exc)
+            return
+        self._send(200, {"ok": True, "devices": SECURITY.devices_snapshot()["devices"]})
+
     def _send(self, code: int, body, ctype: str = "application/json; charset=utf-8",
               extra_headers: list | None = None) -> None:
         if isinstance(body, (dict, list)):
@@ -4900,7 +4934,10 @@ class Handler(BaseHTTPRequestHandler):
                 tls_fingerprint_pretty=mtls.format_fingerprint(TLS_FINGERPRINT))
             self._send(200, snap)
         elif path == "/api/devices":
-            self._send(200, {"devices": []})
+            snap = SECURITY.devices_snapshot()
+            snap["pairing"] = {"network_enabled": NETWORK_CFG.enabled,
+                               "tls_fingerprint": TLS_FINGERPRINT}
+            self._send(200, snap)
         elif path == "/api/state":
             self._send(200, build_view())
         elif path == "/api/node":
@@ -4957,8 +4994,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/security/network":
             self._handle_security_network(payload)
             return
-        if path in ("/api/pair/start", "/api/pair/complete", "/api/devices/revoke"):
-            self._send(501, {"error": "设备配对在 P4 阶段接入（安全重构进行中）"})
+        if path == "/api/pair/start":
+            self._handle_pair_start()
+            return
+        if path == "/api/pair/complete":
+            self._handle_pair_complete(payload)
+            return
+        if path == "/api/devices/revoke":
+            self._handle_device_revoke(payload)
             return
 
         if path in ("/api/restart", "/api/stop"):
