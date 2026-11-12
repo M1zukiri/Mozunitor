@@ -69,6 +69,16 @@
   无 ticket 401。运行时开启网络入口也会拉起转发代理（按端口幂等）。
 - 自检：unit **147 项**、HTTP **55 项** 全 PASS（新增转发 ticket 生命周期与真实代理访问）。
 
+**1.1.1 发布产物**（纯 ASCII 路径重建）：
+- `Mozunitor-1.1.1-portable.exe` 28,139,772 B，
+  sha256 `15bd713e1b2fe84f043193264945b20bd2f2184a15dba7fb826a647985116f5c`
+  （exe 体积因排除未用的 PyQt5/pygame/tkinter 等模块从 70 MB 降到 28 MB；隔离目录启动验证
+  `version: Mozunitor/1.1.1`）。
+- `Mozunitor-1.1.1.apk` 51,393,858 B，
+  sha256 `9067caf0dc26530f14f512ac3a963b08e5a5856a685d695bd8460ce6c8af846a`
+  （versionName=1.1.1，真机安装通过）。
+- 产物在 `temp/release-1.1.1/`；GitHub Release 上传仍需仓库 token，留给用户完成。
+
 ### 2026-11-13 · 1.1.0 首次构建（历史记录）
 - 发布产物（1.1.0，重建于纯 ASCII 路径）：
   - `Mozunitor-1.1.0-portable.exe` 70,670,860 B，
