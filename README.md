@@ -19,6 +19,9 @@
 - **Mozunitor 中继**：本机 → SSH → 对端 Mozunitor → 对端服务，远端监听只绑回环；
   面板 API 也走同一条 SSH 通道。
 - **手机端**：Flutter 入口启动器，把面板声明的服务入口变成应用内一键打开。
+- **零隐式信任（1.1.0）**：回环也要认证；设备/节点用一次性配对码换 token，token 只存哈希；
+  网络入口必须显式开启（HTTPS + 自签证书 + CIDR 白名单），手机按证书指纹钉住。
+  旧 `?token=`、`/api/auth`、`/api/credentials` 已移除，升级步骤见 [迁移说明](docs/MIGRATION-1.1.md)。
 
 ## 下载
 
@@ -26,14 +29,15 @@
 
 | 产物 | 说明 |
 | --- | --- |
-| `Mozunitor-1.0.0-portable.exe` | Windows 便携版，双击运行，不写注册表、不需要安装 |
-| `Mozunitor-1.0.0.apk` | Android 手机端（自签名），安装后在「配置」里填面板地址与凭据 |
+| `Mozunitor-1.1.0-portable.exe` | Windows 便携版，双击运行，不写注册表、不需要安装 |
+| `Mozunitor-1.1.0.apk` | Android 手机端（自签名），安装后用配对码与证书指纹接入面板 |
 
 > 便携版首次运行时会在 exe 旁边生成 `services.json`（来自 `services.example.json`）以及
-> `.state/`、`logs/`，并弹出「设置本机凭据」；可以先点「稍后再说」，之后再改。
-> 请先编辑 `services.json` 里的服务、探针与路径，再启动。
-> 面板默认只监听 `127.0.0.1:8090`；需要局域网/手机访问时把 `listen.host` 改为 `0.0.0.0`，
-> 并妥善保管 `.state/access-tokens.json`。
+> `.state/`、`logs/`，并打印一次性 setup code；浏览器打开 <http://127.0.0.1:8090/> 完成初始化
+> （壳内窗口会自动登录）。请先按需编辑 `services.json` 里的服务与探针。
+>
+> 面板默认只监听 `127.0.0.1:8090`。需要局域网/手机访问时，在「设置 → 安全」开启 HTTPS 网络入口：
+> 绑定具体网卡与端口（默认 8443）、设置 CIDR 白名单；手机端填面板地址、证书指纹与配对码。
 
 ## 从源码运行
 
@@ -57,7 +61,12 @@ python monitor_server.py
 
 ```json
 {
-  "listen": {"host": "127.0.0.1", "port": 8090},
+  "listen": {
+    "local": {"host": "127.0.0.1", "port": 8090},
+    "network": {"enabled": false, "mode": "lan", "bind": "", "port": 8443,
+                "allowed_cidrs": ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12",
+                                  "100.64.0.0/10"]}
+  },
   "node": {"id": "local-node", "name": "本机"},
   "groups": [{"id": "local", "title": "本机服务"}],
   "services": [
@@ -76,7 +85,10 @@ python monitor_server.py
 - `tier`：`core` / `normal` / `optional`。
 - `restart` / `stop`：声明如何重启或终止；不配 `stop` 就不显示终止按钮。
 - `settings`：显式声明可写参数，详见 `services.example.json`。
-- 对端节点在 `peers.list` 里配置；把服务从对端暴露到本机用 `relay` 段（只绑回环，SSH 入口）。
+- `listen.local` 是本机回环入口（仅 HTTP）；`listen.network` 是 HTTPS 网络入口，默认关闭，
+  也可以在设置页开停与改白名单。
+- 对端节点先在两端「节点互联」互相配对，再在 `peers.list` 里配置地址；把服务从对端暴露到本机
+  用 `relay` 段（只绑回环，SSH 入口）。
 
 ## 构建
 
@@ -97,9 +109,14 @@ flutter pub get
 flutter build apk --release
 ```
 
+> 工程路径含非 ASCII 字符时 AOT 阶段会失败（`gen_snapshot` 读路径变乱码）。把 `mobile/`
+> 复制到纯 ASCII 路径再构建，本仓库路径本身不必搬。
+
 ## 安全说明
 
-- 默认只监听回环；非回环访问必须带 token，回环免 token。
+- 默认只监听回环；回环也要认证（setup/launch/管理员口令/本地 token）。
+- 网络访问必须显式开启 HTTPS 网络入口，来源受 CIDR 白名单限制，Public 网络拒绝开启。
+- 管理员口令只存 scrypt 哈希；设备/节点 token 只存 SHA256；自签证书指纹可在安全页查看。
 - 被监控服务默认只读；唯一例外是 `settings` 声明的白名单参数，写前确认并审计。
 - 中继远端 listener 只绑 `127.0.0.1`，SSH 是唯一入口。
 - 不要把 `.state/`、`logs/`、`services.json`（如含真实地址/凭据）提交到仓库。
@@ -110,8 +127,10 @@ flutter build apk --release
 app.py                    托盘 + 内嵌窗口入口
 monitor_server.py         后端：采集、HTTP API、访问控制（仅标准库）
 static/                   前端（无构建，ES modules）
-mobile/                   Flutter 手机端
-tools/                    采集脚本
+mobile/                   Flutter 手机端（配对 / 钉证书 / Keystore）
+tools/                    采集脚本与安全自检
+docs/SPEC.md              安全架构与不变量
+docs/MIGRATION-1.1.md     1.0.0 → 1.1.0 迁移说明
 services.example.json     配置模板
 ```
 

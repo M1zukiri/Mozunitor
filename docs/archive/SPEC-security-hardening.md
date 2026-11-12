@@ -1,3 +1,5 @@
+> **已执行归档**（1.1.0）。实现与验收记录见 `docs/SPEC.md`，迁移步骤见 `docs/MIGRATION-1.1.md`。
+
 # SPEC · 安全重构（1.1.0）
 
 > 工单：零隐式信任 + 双平面 + 设备配对 + TLS。执行完成后并入 `SPEC.md` 并移入 `docs/archive/`。
