@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import authz, csrf, pairing
 from . import nodes as peer_nodes
+from .tickets import TicketStore
 from .audit import AuditLog
 from .identity import LocalToken, NodeIdentity, harden_file, random_token
 from .passwords import hash_password, needs_rehash, verify_password
@@ -77,6 +78,7 @@ class SecurityState:
     devices: pairing.DeviceStore = field(init=False)
     pair_codes: pairing.PairCodes = field(init=False)
     nodes: peer_nodes.NodeStore = field(init=False)
+    tickets: TicketStore = field(init=False)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
@@ -89,6 +91,7 @@ class SecurityState:
         self.devices = pairing.DeviceStore(self.state_dir / "devices.json")
         self.pair_codes = pairing.PairCodes()
         self.nodes = peer_nodes.NodeStore(self.state_dir)
+        self.tickets = TicketStore()
         secret = self._load_secret(self.state_dir / "session-secret")
         self.sessions = SessionStore(secret, ttl_s=self.ttl_s, max_age_s=self.max_age_s,
                                      clock=self.clock)
@@ -469,6 +472,21 @@ class SecurityState:
 
     def nodes_snapshot(self) -> dict:
         return {"nodes": self.nodes.list()}
+
+    # ---------------------------------------------------------------- 转发 ticket
+    def issue_forward_ticket(self, service_id: str, target_port: int, *,
+                             client_ip: str = "", allowed_cidrs=()) -> dict:
+        ticket, expires = self.tickets.issue(service_id, target_port,
+                                             client_ip=client_ip,
+                                             allowed_cidrs=allowed_cidrs)
+        self.audit.write("forward_ticket", ip=client_ip, service=service_id,
+                         port=int(target_port))
+        return {"ticket": ticket, "expires_at": expires,
+                "ttl_s": self.tickets.ttl_s, "service": service_id,
+                "target_port": int(target_port)}
+
+    def redeem_forward_ticket(self, ticket: str, client_ip: str) -> dict | None:
+        return self.tickets.redeem(ticket, client_ip)
 
     def snapshot(self) -> dict:
         net = self.network or NetworkConfig()

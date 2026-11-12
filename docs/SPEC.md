@@ -117,4 +117,6 @@
 - Android 真机：配对码 → 设备 token → 面板数据读取；证书指纹钉住；吊销后立即 401。
 - 便携 exe：PyInstaller onefile 构建并在隔离目录启动（生成 services.json/.state/logs，回环 8090 正常）。
 - APK：`flutter analyze` 无问题；debug APK 真机验证通过。release APK 构建需要纯 ASCII 工作路径（见 `NOTES.md`）。
-- forwards 短 TTL ticket 未实现：`forwards` 在 1.1.0 不启动，等 ticket 机制落地后再恢复（见 `AGENTS.md`）。
+- forwards：改为短 TTL ticket。`POST /api/forward/ticket`（read + CSRF）签发 60 秒、限次、
+  绑定服务与来源 CIDR 的 ticket；转发代理在首个请求核销并下发 HttpOnly Cookie 供子资源复用，
+  无 ticket 一律 401；代理只绑网络入口 IP，不用 `0.0.0.0`。unit 147 项、HTTP 55 项全 PASS。

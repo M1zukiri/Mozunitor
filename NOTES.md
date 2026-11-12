@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-11-13）
 
-- 版本 **1.1.0**（B 位：安全重构完成）。开发基线为公开 1.0.0，P1–P5 为 C 位检查点。开发分支 `refactor/security`，按
+- 版本 **1.1.1**（B 位：安全重构完成 + forwards ticket）。开发基线为公开 1.0.0。开发分支 `refactor/security`，按
   `docs/SPEC-security-hardening.md` 执行；B 位目标 **1.1.0**。
 
 ## 进度记录
@@ -60,8 +60,16 @@
 - 构建与验证：便携 exe（PyInstaller onefile，约 67 MB）在隔离目录启动通过（生成
   services.json/.state/logs，回环 8090 `needs_setup=true`）；Android debug APK 真机验证通过
   （配对 → 设备 token → 面板数据；吊销后 401）。release APK 需在纯 ASCII 路径构建，见下方已知限制。
-- 已知限制：`forwards` 短 TTL ticket 未实现，1.1.0 不启动 forwards（改用 relay 或对端网络入口）；
-  APK release 构建依赖纯 ASCII 工作路径与干净 gradle 环境。
+- 已知限制：APK release 构建依赖纯 ASCII 工作路径与干净 gradle 环境。
+
+### 2026-11-13 · 1.1.1（forwards ticket 收尾）
+
+- `forwards` 改为短 TTL ticket：`POST /api/forward/ticket` 签发（60 秒、限次、绑定服务与来源
+  CIDR），代理只绑网络入口 IP；首个请求核销后把 ticket 下发为 HttpOnly Cookie，子资源复用；
+  无 ticket 401。运行时开启网络入口也会拉起转发代理（按端口幂等）。
+- 自检：unit **147 项**、HTTP **55 项** 全 PASS（新增转发 ticket 生命周期与真实代理访问）。
+
+### 2026-11-13 · 1.1.0 首次构建（历史记录）
 - 发布产物（1.1.0，重建于纯 ASCII 路径）：
   - `Mozunitor-1.1.0-portable.exe` 70,670,860 B，
     sha256 `d39d044c4428d91fa285a62ceffbf9f7f1478794b1cfeeed8e80c61feb0aee67`

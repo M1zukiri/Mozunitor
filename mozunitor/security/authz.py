@@ -94,6 +94,9 @@ ROUTES: tuple[Route, ...] = (
        content_type="json", audit=True, note="对端凭配对码换取节点 token；限流"),
     _r("POST", r"^/api/nodes/revoke$", "admin", listener="local", csrf=True,
        content_type="json", audit=True),
+    # ---- 转发 ticket（短 TTL；代理面按 ticket 鉴权）
+    _r("POST", r"^/api/forward/ticket$", "read", csrf=True,
+       content_type="json", audit=True, note="签发短 TTL 转发 ticket"),
 )
 
 # 1.0.0 的旧通道：明确下线，返回 410 并指向新流程；不再接受任何凭据。

@@ -44,7 +44,8 @@
 
 ## 6. 已知限制
 
-- `forwards`（把对端端口映射到本机）在 1.1.0 不启动，等短 TTL ticket 机制实现后恢复；
-  需要跨机访问服务请用 `relay`（SSH）或直接访问对端的网络入口。
+- `forwards` 改用短 TTL ticket：先在面板登录并 `POST /api/forward/ticket`（或在入口页按提示）签发，
+  再带 `?mozu_ticket=<ticket>` 打开；ticket 60 秒内有效、绑定来源 CIDR，代理会把 ticket 下发成
+  HttpOnly Cookie 供子资源复用。`relay`（SSH）与对端网络入口是另外两条通道。
 - 自签证书首次访问浏览器有一次性警告；手机必须钉指纹。
 - Android release APK 需要在纯 ASCII 路径构建（AOT 阶段对非 ASCII 路径敏感）。

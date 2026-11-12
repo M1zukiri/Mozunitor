@@ -28,6 +28,7 @@ from mozunitor.net import listeners  # noqa: E402
 from mozunitor.security import (audit, authz, csrf, identity, pairing,
                                 passwords, ratelimit, sessions)  # noqa: E402
 from mozunitor.security import nodes as peer_nodes  # noqa: E402
+from mozunitor.security import tickets as ticket_mod  # noqa: E402
 from mozunitor.security import state as security_state  # noqa: E402
 
 
@@ -575,8 +576,37 @@ class NodeTests(unittest.TestCase):
             check("节点：吊销后 401", r.status == 401, str(r.status))
 
 
+class TicketTests(unittest.TestCase):
+    def test_ticket_lifecycle(self):
+        now = [1000.0]
+        store = ticket_mod.TicketStore(ttl_s=60, clock=lambda: now[0])
+        ticket, expires = store.issue("panel", 8123, allowed_cidrs=["127.0.0.0/8"])
+        check("ticket：签发", ticket.startswith("mozt_") and expires == 1060.0)
+        rec = store.redeem(ticket, "127.0.0.1")
+        check("ticket：核销", rec is not None and rec["target_port"] == 8123)
+        check("ticket：白名单外拒绝", store.redeem(ticket, "10.1.2.3") is None)
+        check("ticket：错误值拒绝", store.redeem("mozt_bad", "127.0.0.1") is None)
+        now[0] += 61
+        check("ticket：过期拒绝", store.redeem(ticket, "127.0.0.1") is None)
+        once, _ = store.issue("panel", 8123, uses=1)
+        check("ticket：次数用尽",
+              store.redeem(once, "127.0.0.1") is not None
+              and store.redeem(once, "127.0.0.1") is None)
+
+    def test_state_forward_ticket(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            st = security_state.SecurityState(Path(tmp), port=8097, lockout_s=30)
+            st.setup_code = "SETUP-TEST"
+            st.complete_setup("password123", "SETUP-TEST", client_ip="127.0.0.1")
+            issued = st.issue_forward_ticket("panel", 8097, client_ip="127.0.0.1",
+                                             allowed_cidrs=["127.0.0.0/8"])
+            check("ticket：SecurityState 签发", issued["ticket"].startswith("mozt_"))
+            rec = st.redeem_forward_ticket(issued["ticket"], "127.0.0.1")
+            check("ticket：SecurityState 核销", rec is not None)
+
+
 def main() -> int:
-    print("=== security core selftest (1.1.0 check) ===")
+    print("=== security core selftest (1.1.1 check) ===")
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromModule(sys.modules[__name__])
     result = unittest.TextTestRunner(verbosity=0).run(suite)

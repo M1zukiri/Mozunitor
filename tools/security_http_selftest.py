@@ -49,7 +49,8 @@ def build_config(path: Path) -> None:
         "peers": {"list": [{"id": "node-b", "url": "https://127.0.0.1:8134"}],
                   "discover": {"tailscale": False}},
         "access": {"tokens_file": ".state/access-tokens.json"},
-        "forwards": {"bind": "127.0.0.1", "ports": []},
+        "forwards": {"bind": "127.0.0.1",
+                     "ports": [{"service": "panel", "port": PORT + 20, "to": PORT}]},
         "intervals": {"probe_local_ms": 5000, "sample_local_ms": 60000,
                       "sample_remote_ms": 60000, "peer_poll_ms": 500,
                       "keepalive_ms": 60000},
@@ -89,7 +90,7 @@ class Client:
 
 
 def main() -> int:
-    print("=== security http selftest (1.1.0 check) ===")
+    print("=== security http selftest (1.1.1 check) ===")
     tmp = Path(tempfile.mkdtemp(prefix="mozu-p2-"))
     cfg = tmp / "services.json"
     state = tmp / "state"
@@ -231,6 +232,35 @@ def main() -> int:
                   headers={"X-Mozunitor-Local-Token": tok})
         code, _, _ = net.req("GET", "/api/state")
         check("网络：恢复白名单后可读", code == 200, str(code))
+
+        # ---- forwards：短 TTL ticket ----
+        code, _, body = anon.req("POST", "/api/forward/ticket", body={"id": "panel"},
+                                 headers={"X-Mozunitor-CSRF": csrf})
+        d = json.loads(body)
+        fticket = d.get("ticket") or ""
+        furl = d.get("url") or ""
+        check("转发：签发 ticket", code == 200 and fticket.startswith("mozt_"), str(code))
+        check("转发：返回带 ticket 的地址", "mozu_ticket=" in furl)
+
+        no_proxy = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        target = f"http://127.0.0.1:{PORT + 20}/?mozu_ticket={fticket}"
+        with no_proxy.open(target, timeout=10) as r:
+            page = r.read().decode("utf-8", "replace")
+        check("转发：带 ticket 访问成功", "Mozunitor" in page)
+
+        def _status(url: str, headers=None) -> int:
+            try:
+                req = urllib.request.Request(url, headers=headers or {})
+                with no_proxy.open(req, timeout=10) as r:
+                    return r.status
+            except urllib.error.HTTPError as exc:
+                return exc.code
+
+        check("转发：无 ticket 拒绝",
+              _status(f"http://127.0.0.1:{PORT + 20}/") == 401)
+        check("转发：cookie 复用 ticket",
+              _status(f"http://127.0.0.1:{PORT + 20}/static/app.js",
+                      {"Cookie": "mozu_forward_ticket=" + fticket}) == 200)
 
         bad = Client()
         for _ in range(5):

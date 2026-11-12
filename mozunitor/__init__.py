@@ -4,4 +4,4 @@
 本包在 P1 阶段只提供与 HTTP 传输无关的安全原语；P2 起由 net/http 管线接入。
 """
 
-__version__ = "1.1.0"          # B 位：安全重构完成
+__version__ = "1.1.1"          # B 位：forwards ticket 收尾

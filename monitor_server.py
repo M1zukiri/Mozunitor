@@ -31,7 +31,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from mozunitor import tls as mtls
 from mozunitor.net.listeners import (NetworkConfig, NetworkConfigError, NetworkServer,
-                                     default_bind, ensure_allowed, serve_in_thread)
+                                     default_bind, ensure_allowed, ip_in_cidrs,
+                                     parse_cidrs, serve_in_thread)
 from mozunitor.net.listeners import stop as stop_network_server
 from mozunitor.security import nodes as peer_nodes
 from mozunitor.security.state import AuthError as SecurityAuthError
@@ -192,7 +193,7 @@ SECURITY = SecurityState(
     login_max_failures=int(_SECURITY_CFG.get("login_max_failures", 5)),
     lockout_s=int(_SECURITY_CFG.get("lockout_s", 300)),
 )
-SERVER_VERSION = "Mozunitor/1.1.0"
+SERVER_VERSION = "Mozunitor/1.1.1"
 
 
 # 远端 Ollama 的模型状态：直接走 HTTP，不经 SSH。expires_at 是绝对时间戳、倒计时由前端算，
@@ -4206,9 +4207,26 @@ def _proxy_authorized(head: bytes) -> tuple[bool, str, str]:
     return False, "", ""
 
 
-def _proxy_denied(conn) -> None:
-    body = ("需要登录：先打开面板 http://<本机局域网IP>:%d/ 用用户名密码登录，"
-            "或在本地址后加 ?token=<lan token>。" % int(CFG["listen"]["port"])).encode("utf-8")
+_TICKET_QUERY_RE = re.compile(rb"[?&]mozu_ticket=([A-Za-z0-9_-]+)")
+_TICKET_HEADER_RE = re.compile(rb"(?im)^X-Mozunitor-Ticket:\s*([A-Za-z0-9_-]+)")
+_TICKET_COOKIE_RE = re.compile(rb"(?im)^Cookie:.*\bmozu_forward_ticket=([A-Za-z0-9_-]+)")
+
+
+def _forward_authorized(head: bytes, client_ip: str) -> tuple[bool, str, str]:
+    """转发代理的唯一凭据：短 TTL ticket。ticket 会下发成 Cookie，供子资源复用。"""
+    for rx in (_TICKET_QUERY_RE, _TICKET_HEADER_RE, _TICKET_COOKIE_RE):
+        m = rx.search(head)
+        if not m:
+            continue
+        ticket = m.group(1).decode("ascii", "ignore")
+        if SECURITY.redeem_forward_ticket(ticket, client_ip) is not None:
+            return True, "mozu_forward_ticket", ticket
+    return False, "", ""
+
+
+def _proxy_denied(conn, status: int = 401) -> None:
+    body = ("需要 ticket：先登录面板，在「设置 → 安全」或 POST /api/forward/ticket "
+            "为这个入口签发一次性 ticket，再用 ?mozu_ticket=<ticket> 打开。").encode("utf-8")
     try:
         conn.sendall(b"HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain; charset=utf-8\r\n"
                      b"Content-Length: " + str(len(body)).encode() + b"\r\n"
@@ -4370,13 +4388,16 @@ def _close_quiet(sock) -> None:
         pass
 
 
-def _proxy_conn(conn, target_port: int, label: str) -> None:
+def _proxy_conn(conn, target_port: int, label: str, allowed_cidrs=(), client_ip: str = "") -> None:
     try:
         head_rest = _read_proxy_head(conn)
         if head_rest is None:
             return
         head, rest = head_rest
-        ok, cname, cval = _proxy_authorized(head)
+        if allowed_cidrs and not ip_in_cidrs(client_ip, allowed_cidrs):
+            _proxy_denied(conn, 403)
+            return
+        ok, cname, cval = _forward_authorized(head, client_ip)
         if not ok:
             _proxy_denied(conn)
             return
@@ -4420,7 +4441,8 @@ def _proxy_conn(conn, target_port: int, label: str) -> None:
         _close_quiet(conn)
 
 
-def _serve_forward(bind: str, port: int, target_port: int, label: str) -> None:
+def _serve_forward(bind: str, port: int, target_port: int, label: str,
+                   allowed_cidrs=()) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
@@ -4430,15 +4452,16 @@ def _serve_forward(bind: str, port: int, target_port: int, label: str) -> None:
         print(f"[forward {label}] 无法监听 {bind}:{port} —— {e}")
         _close_quiet(srv)
         return
-    print(f"[forward {label}] {bind}:{port} → 127.0.0.1:{target_port}")
+    print(f"[forward {label}] {bind}:{port} → 127.0.0.1:{target_port}（需 ticket）")
     while True:
         try:
-            conn, _ = srv.accept()
+            conn, peer = srv.accept()
         except OSError:
             time.sleep(0.5)
             continue
         conn.settimeout(15)             # 只在读首个请求头时生效，之后放开
-        threading.Thread(target=_proxy_conn, args=(conn, target_port, label),
+        threading.Thread(target=_proxy_conn,
+                         args=(conn, target_port, label, allowed_cidrs, peer[0]),
                          daemon=True).start()
 
 
@@ -4471,14 +4494,28 @@ def forward_token_file(sid: str) -> str:
     return str((svc or {}).get("restart", {}).get(spec) or "")
 
 
+_FORWARD_STARTED: set[int] = set()
+
+
 def open_proxy_listeners() -> None:
-    fw = CFG.get("forwards") or {}
-    if not remote_access() or not fw.get("ports"):
+    """网络入口开启时按 forwards.ports 启动 ticket 代理；绑定网络 IP，不用 0.0.0.0。"""
+    if not NETWORK_CFG.enabled or not NETWORK_CFG.bind:
         return
-    bind = str(fw.get("bind") or "0.0.0.0")
-    for f in forward_ports():
+    ports = forward_ports()
+    if not ports:
+        return
+    allowed = parse_cidrs(NETWORK_CFG.allowed_cidrs)
+    for f in ports:
+        sport = int(f["port"])
+        if sport == int(NETWORK_CFG.port):
+            print(f"[forward] 跳过 {f['service']}：与网络入口端口 {sport} 冲突")
+            continue
+        if sport in _FORWARD_STARTED:
+            continue
+        _FORWARD_STARTED.add(sport)
         threading.Thread(target=_serve_forward,
-                         args=(bind, f["port"], f["to"], f["service"]), daemon=True).start()
+                         args=(NETWORK_CFG.bind, f["port"], f["to"], f["service"],
+                               allowed), daemon=True).start()
 
 
 def safe_join(base: Path, rel: str) -> Path:
@@ -4554,6 +4591,8 @@ def apply_network_config(cfg: NetworkConfig, *, persist: bool = True,
     SECURITY.set_network(cfg)
     if persist:
         save_listen_config(cfg)
+    if cfg.enabled:
+        open_proxy_listeners()
     return cfg
 
 
@@ -4891,6 +4930,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, {"ok": True, "nodes": SECURITY.nodes_snapshot()["nodes"]})
 
+    def _handle_forward_ticket(self, payload: dict) -> None:
+        sid = str(payload.get("id") or payload.get("service") or "")
+        mapping = forward_map().get(sid)
+        if mapping is None:
+            self._send(404, {"error": "没有这个转发映射"})
+            return
+        if not (NETWORK_CFG.enabled and NETWORK_CFG.bind):
+            self._send(400, {"error": "先开启网络入口再签发转发 ticket"})
+            return
+        issued = SECURITY.issue_forward_ticket(
+            sid, mapping["to"], client_ip=self._client_ip(),
+            allowed_cidrs=NETWORK_CFG.allowed_cidrs)
+        url = f"http://{NETWORK_CFG.bind}:{mapping['port']}/?mozu_ticket={issued['ticket']}"
+        self._send(200, {"ok": True, **issued, "url": url})
+
     def _send(self, code: int, body, ctype: str = "application/json; charset=utf-8",
               extra_headers: list | None = None) -> None:
         if isinstance(body, (dict, list)):
@@ -5056,6 +5110,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/nodes/revoke":
             self._handle_node_revoke(payload)
+            return
+        if path == "/api/forward/ticket":
+            self._handle_forward_ticket(payload)
             return
 
         if path in ("/api/restart", "/api/stop"):
