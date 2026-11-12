@@ -463,7 +463,17 @@ def main() -> int:
 
     API = Api()
     x, y, width, height = window_geometry()
-    WIN = webview.create_window(TITLE, f"http://127.0.0.1:{port}/",
+    # 1.1.0：回环不再免鉴权。壳把仅存在于本进程内存的 launch token 通过 URL 片段
+    # 交给 WebView，前端用它换 HttpOnly 会话后立刻清掉片段；浏览器手动打开仍需口令登录。
+    panel_url = f"http://127.0.0.1:{port}/"
+    try:
+        _sec = getattr(monitor_server, "SECURITY", None)
+        _launch = str(getattr(_sec, "launch_token", "") or "")
+        if _launch:
+            panel_url += "#launch=" + _launch
+    except Exception:  # noqa: BLE001 —— launch 注入失败要退化成普通登录，不能拦住窗口
+        log("launch token 注入失败，退回口令登录")
+    WIN = webview.create_window(TITLE, panel_url,
                                 x=x, y=y, width=width, height=height, js_api=API)
     WIN.events.closing += on_closing
     TRAY = build_tray()

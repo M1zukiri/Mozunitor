@@ -2,7 +2,7 @@
 // 全局事件委托也在这里，模块之间不互相挂监听。
 import { esc, fmtMs, fmtDur } from './js/format.js';
 import {
-  authFetch, authToken, tokenFromUrl, IS_LOOPBACK,
+  authFetch, IS_LOOPBACK, bootstrap, login as apiLogin, completeSetup,
 } from './js/api.js';
 import {
   askConfirm, bindConfirm, confirmOpen, settleConfirm,
@@ -225,8 +225,7 @@ async function poll() {
   try {
     const r = await authFetch('/api/state', { cache: 'no-store' });
     if (r.status === 401) {
-      gateMsg('登录后即可查看面板');
-      showGate();
+      if (!NEEDS_SETUP) showLoginGate('会话已过期，请重新登录');
       return;
     }
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -238,99 +237,78 @@ async function poll() {
   }
 }
 
-/* ------------------------------------------------------------------ 登录 */
+/* ------------------------------------------------------------------ 登录 / 初始化 */
 
-async function doLogin(payload) {
-  try {
-    const r = await fetch('/api/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.ok) {
-      const err = $('#gate-err');
-      if (err) err.textContent = d.error || '凭据不正确';
-      return;
-    }
-    if (payload.token) {
-      try {
-        localStorage.setItem('mozunitor_token', payload.token);
-      } catch (e) { /* 隐私模式下写不进也无妨，Cookie 已经生效 */ }
-    }
-    hideGate();
-    poll();
-  } catch (e) {
-    showGate('请求失败：' + e);
-  }
+let NEEDS_SETUP = false;
+let LAUNCH_PROOF = '';       // 壳内 launch token：初始化时可当一次性凭据
+
+function gateError(msg) {
+  const el = $('#gate-err');
+  if (el) el.textContent = msg || '';
 }
 
-let PRESET = null;
-
-async function submitGate() {
-  const user = ($('#gate-user').value || '').trim();
-  const pass = $('#gate-pass').value || '';
-  const err = $('#gate-err');
-  if (err) err.textContent = '';
-  if (!SETUP) return doLogin({ user, password: pass });
-
-  if (!user || !pass) {
-    if (err) err.textContent = '用户名与密码都不能为空';
-    return;
-  }
-  try {
-    const r = await fetch('/api/credentials', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: user, password: pass })
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.ok) {
-      if (err) err.textContent = d.error || '保存失败';
-      return;
-    }
-    PRESET = null;
-    // 身份变了，peers 与状态都该重建；新会话已随这次响应下发
-    location.reload();
-  } catch (e) {
-    if (err) err.textContent = '请求失败：' + e;
-  }
-}
-
-/* 首次启动会生成随机预设，必须提醒用户改掉。只在回环上读得到它。 */
-async function checkPreset() {
-  if (!IS_LOOPBACK) return;
-  try {
-    const r = await fetch('/api/credentials');
-    if (!r.ok) return;
-    const d = await r.json();
-    if (!d.preset) return;
-    PRESET = { user: d.username, password: d.preset_password || '' };
-    openSetup();
-  } catch (e) { /* 读不到就当作没有预设 */ }
-}
-
-function openSetup() {
+function showSetupGate(launch) {
+  NEEDS_SETUP = true;
+  LAUNCH_PROOF = launch || '';
   setSetup(true);
-  $('#gate-title').textContent = '设置本机凭据';
-  $('#gate-desc').textContent = '当前是自动生成的随机预设，请立即改成你自己的。'
-    + '用户名决定哪些设备能互相看见，密码决定谁能执行控制操作；'
-    + '两台设备填成一样的才能互认。';
-  $('#gate-go').textContent = '保存';
-  $('#gate-later').classList.remove('hidden');
-  $('#gate-hint').textContent = '凭据只能在运行本面板的这台机器上修改，远端渠道一律禁止。';
-  $('#gate-user').value = PRESET ? PRESET.user : '';
-  $('#gate-pass').value = PRESET ? PRESET.password : '';
+  $('#gate-title').textContent = '首次初始化';
+  $('#gate-desc').textContent = '设置管理员口令（至少 8 位）。'
+    + (LAUNCH_PROOF ? '' : ' setup code 见前台启动日志或壳日志。');
+  $('#gate-user-field').classList.toggle('hidden', !!LAUNCH_PROOF);
+  $('#gate-user').placeholder = 'setup code';
+  $('#gate-user').value = '';
+  $('#gate-pass').placeholder = '管理员口令（至少 8 位）';
+  $('#gate-go').textContent = '初始化';
+  $('#gate-later').classList.add('hidden');
+  $('#gate-hint').textContent = '口令不会明文落盘；初始化后本窗口自动登录。';
   showGate();
 }
 
-/* 带 token 的旧链接：换成 Cookie 再撤掉地址栏里的 token。 */
-async function submitToken(value) {
-  const tok = String(value || '').trim();
-  if (!tok) return showGate('请填入凭据');
-  const err = $('#gate-err');
-  if (err) err.textContent = '';
-  await doLogin({ token: tok });
+function showLoginGate(msg) {
+  NEEDS_SETUP = false;
+  setSetup(false);
+  $('#gate-title').textContent = '需要登录';
+  $('#gate-desc').textContent = '输入管理员口令。1.1.0 起回环访问同样需要登录。';
+  $('#gate-user-field').classList.add('hidden');
+  $('#gate-pass').placeholder = '管理员口令';
+  $('#gate-go').textContent = '登录';
+  $('#gate-later').classList.add('hidden');
+  $('#gate-hint').textContent = '登录后 Cookie 保持 30 天；在设置页可注销当前会话。';
+  gateMsg(msg || '');
+  showGate();
+}
+
+async function submitGate() {
+  const pass = $('#gate-pass').value || '';
+  const proof = LAUNCH_PROOF || ($('#gate-user').value || '').trim();
+  gateError('');
+  if (NEEDS_SETUP) {
+    if (!pass) return gateError('请设置管理员口令');
+    const r = await completeSetup(pass, proof);
+    if (!r.ok) return gateError(r.error);
+    NEEDS_SETUP = false;
+    setSetup(false);
+    hideGate();
+    poll();
+    return;
+  }
+  if (!pass) return gateError('请输入口令');
+  const r = await apiLogin(pass);
+  if (!r.ok) return gateError(r.error);
+  $('#gate-pass').value = '';
+  hideGate();
+  poll();
+}
+
+async function initAuth() {
+  try {
+    const boot = await bootstrap();
+    if (boot.needsSetup) { showSetupGate(boot.launch); return; }
+    if (boot.session) { hideGate(); poll(); return; }
+    showLoginGate('登录后即可查看面板');
+  } catch (e) {
+    showLoginGate('无法连接后端：' + e);
+  }
 }
 
 /* ------------------------------------------------------------------ 事件 */
@@ -528,18 +506,5 @@ function renderSettingsPage() { renderSettings(); }
 bindConfirm();
 bindEvents();
 setInterval(tickCountdowns, 1000);
-poll();
+initAuth();
 setInterval(poll, POLL_MS);
-checkPreset();          // 首次启动的随机预设要提醒用户改掉
-
-/* 带 token 的链接：把它换成 Cookie 再撤掉地址栏里的 token —— 否则 token 会一直留在
-   手机浏览器的地址栏与历史里，截屏分享进度时容易一起带出去。 */
-(() => {
-  const t = tokenFromUrl();
-  if (!t) return;
-  submitToken(t).then(() => {
-    try {
-      history.replaceState(null, '', location.pathname);
-    } catch (e) { /* 老浏览器不支持就算了，功能不受影响 */ }
-  });
-})();

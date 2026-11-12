@@ -76,20 +76,19 @@
       <h2 id="gate-title">需要访问凭据</h2>
     </div>
     <div class="modal-body">
-      <p id="gate-desc">本面板绑在局域网地址上。填用户名即可查看状态；再填密码才能执行重启、终止这类控制操作。</p>
-      <label class="field">
-        <span class="field-label">用户名</span>
-        <input id="gate-user" type="text" autocomplete="username"
-               autocapitalize="off" spellcheck="false" placeholder="用户名">
+      <p id="gate-desc">回环访问同样需要登录。输入管理员口令；首次运行先完成初始化。</p>
+      <label class="field" id="gate-user-field">
+        <span class="field-label">setup code</span>
+        <input id="gate-user" type="text" autocomplete="one-time-code"
+               autocapitalize="off" spellcheck="false" placeholder="setup code">
       </label>
       <label class="field">
-        <span class="field-label">密码</span>
+        <span class="field-label">口令</span>
         <input id="gate-pass" type="password" autocomplete="current-password"
-               autocapitalize="off" spellcheck="false" placeholder="密码（留空则只读）">
+               autocapitalize="off" spellcheck="false" placeholder="管理员口令">
       </label>
       <p id="gate-err" class="gate-err" role="alert"></p>
-      <p class="hint" id="gate-hint">凭据存在服务端 <code>.state/credentials.json</code>，
-        只能在运行本面板的这台机器上修改。</p>
+      <p class="hint" id="gate-hint">口令只以 scrypt 派生值落盘；初始化后本窗口自动登录。</p>
     </div>
     <div class="modal-foot gate-foot">
       <button id="gate-later" type="button" class="btn hidden">稍后再说</button>

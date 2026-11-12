@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-11-13）
 
-- 版本 **1.0.1**（公开基线 1.0.0；安全重构 P1 检查点）。开发分支 `refactor/security`，按
+- 版本 **1.0.2**（公开基线 1.0.0；安全重构 P2 检查点）。开发分支 `refactor/security`，按
   `docs/SPEC-security-hardening.md` 执行；B 位目标 **1.1.0**。
 
 ## 进度记录
@@ -17,3 +17,8 @@
   token（含 ACL 收紧）、服务端会话（HMAC Cookie、滑动 TTL、吊销）、声明式路由表（scope / listener /
   CSRF / Content-Type）、Origin / Host / CSRF 校验、登录限流、安全审计（脱敏 JSONL）；
   `tools/security_selftest.py` **79 项全 PASS**。HTTP 管线尚未接入（P2）。
+- P2（C 位 **1.0.2**）：HTTP 管线接入 —— 所有 `/api/*`（含回环）统一过 `SecurityState.authorize()`；
+  旧 `?token=` / `/api/auth` / `/api/credentials` → 410；新增 `/api/setup/*`、`/api/session*`、
+  `/api/security`、`/api/devices`；CSRF / Origin / Host / Content-Type 校验与安全响应头；壳经 URL
+  片段注入 launch token。`tools/security_http_selftest.py` **21 项全 PASS**；Playwright 冒烟：
+  setup → 面板 → 刷新会话保持、无 JS 异常。网络 listener / TLS / 安全页仍待 P3。

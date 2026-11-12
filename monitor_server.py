@@ -28,6 +28,9 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from mozunitor.security.state import AuthError as SecurityAuthError
+from mozunitor.security.state import SecurityState
 from pathlib import Path
 
 # 便携版（PyInstaller）里代码与静态资源在临时解包目录，可写状态要落在 exe 旁边。
@@ -140,7 +143,29 @@ DISCOVER_CFG = (CFG.get("peers") or {}).get("discover") or {}
 DISCOVER_ON = bool(DISCOVER_CFG.get("tailscale", True))
 DISCOVER_EVERY_S = max(15.0, float(DISCOVER_CFG.get("every_s", 60)))
 DISCOVER_TIMEOUT_S = 2.5
-LOCAL_PORT = int(CFG["listen"]["port"])
+
+# ---------------------------------------------------------------- 监听面
+# 1.1.0 起配置允许 `listen.local` / `listen.network`；旧配置只有 host/port，
+# 这里统一折算成本地 listener 的 host/port（网络 listener 在 P3 接入）。
+_LISTEN_CFG = CFG.get("listen") or {}
+_LOCAL_LISTEN = (_LISTEN_CFG.get("local")
+                 if isinstance(_LISTEN_CFG.get("local"), dict) else _LISTEN_CFG)
+LOCAL_HOST = str(_LOCAL_LISTEN.get("host") or "127.0.0.1")
+LOCAL_PORT = int(_LOCAL_LISTEN.get("port") or 8090)
+
+# 安全状态：管理员口令、会话、launch/local token、限流与审计。
+# 1.1.0 起 Handler 不再自己判“回环免鉴权”，一切经 SecurityState.authorize()。
+_SECURITY_CFG = CFG.get("security") or {}
+SECURITY = SecurityState(
+    ROOT, port=LOCAL_PORT, net_host=LOCAL_HOST,
+    ttl_s=int(_SECURITY_CFG.get("session_ttl_s", 1800)),
+    max_age_s=int(_SECURITY_CFG.get("session_max_age_s", 2592000)),
+    login_window_s=int(_SECURITY_CFG.get("login_window_s", 300)),
+    login_max_failures=int(_SECURITY_CFG.get("login_max_failures", 5)),
+    lockout_s=int(_SECURITY_CFG.get("lockout_s", 300)),
+)
+SERVER_VERSION = "Mozunitor/1.0.2"
+
 
 # 远端 Ollama 的模型状态：直接走 HTTP，不经 SSH。expires_at 是绝对时间戳、倒计时由前端算，
 # 故 5 秒采样已够；可用模型清单几乎不变，每 MODELS_TAGS_EVERY 轮才拉一次。
@@ -657,7 +682,7 @@ STATE = State()
 _RESTART_LOCK = threading.Lock()          # 同一时刻只允许一个重启任务
 KEEPALIVE: dict[str, dict] = {}           # 各被保活服务的运行状态，见 keepalive_state()
 
-ACTION_LOG = ROOT / "logs" / "actions.jsonl"
+ACTION_LOG = Path(os.environ.get("MOZU_ACTION_LOG") or (ROOT / "logs" / "actions.jsonl"))
 
 
 class _JobIoCounters(ctypes.Structure):
@@ -4017,7 +4042,7 @@ DEFAULT_LEVELS = {
     "/api/service-settings": "read",
 }
 LEVELS: dict = {**DEFAULT_LEVELS, **((ACCESS.get("levels") or {}))}
-LEVEL_RANK = {"": 0, "read": 1, "write": 2}
+LEVEL_RANK = {"": 0, "read": 1, "write": 2, "admin": 3}
 
 CREDS: dict = {}
 
@@ -4134,9 +4159,8 @@ def token_matches(cand: str | None) -> bool:
 
 
 def remote_access() -> bool:
-    """面板是否绑在非回环地址上——只有这时才需要 token。"""
-    host = str(CFG["listen"]["host"])
-    return host not in ("127.0.0.1", "::1", "localhost")
+    """面板是否绑在非回环地址上。1.1.0 起回环也需要登录，这个函数只用于提示。"""
+    return LOCAL_HOST not in ("127.0.0.1", "::1", "localhost")
 
 
 # ---------------------------------------------------------------- 局域网入口
@@ -4488,28 +4512,20 @@ def lan_addresses() -> list[str]:
 
 def print_access_hints(host: str, port: int) -> None:
     print(f"Mozunitor 已启动: http://127.0.0.1:{port}/")
-    if not remote_access():
-        print("仅监听回环；Ctrl+C 退出")
-        return
-    print(f"已绑定 {host}，以下地址需要 token（本机回环免 token）：")
-    for ip in lan_addresses():
-        print(f"  http://{ip}:{port}/")
-    print(f"token 文件: {TOKENS_FILE}")
-    for kind, tok in TOKENS.items():
-        print(f"  {kind:<9} http://127.0.0.1:{port}/?token={tok}")
-
-    ports = forward_ports()
-    if ports:
-        ips = lan_addresses()
-        print("局域网入口（手机连同一 WiFi 即可，需 ?token=<lan token>）：")
-        for f in ports:
-            svc = next((s for s in SERVICES if s["id"] == f["service"]), {})
-            base = f"http://{ips[0]}:{f['port']}/" if ips else f"http://<本机局域网IP>:{f['port']}/"
-            print(f"  {f['service']:<11} {base:<40} ← {svc.get('name', '')}（{f['note']}）")
+    print("1.1.0 起回环也需要登录（不再有回环免鉴权）：")
+    if SECURITY.needs_setup:
+        print(f"  首次初始化 setup code: {SECURITY.setup_code}")
+        print("  壳内通过 launch token 自动登录；也可用上面的 setup code 完成初始化")
+    else:
+        print("  用管理员口令登录；本机脚本可用 .state/local-token")
+    if remote_access():
+        print(f"已绑定 {host}（非回环）：需要先登录；网络模式与 TLS 在 P3 接入")
+        for ip in lan_addresses():
+            print(f"  http://{ip}:{port}/")
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Mozunitor/1.0.1"
+    server_version = "Mozunitor/1.0.2"
     protocol_version = "HTTP/1.1"
     _session_cookie: str | None = None       # 本次响应要下发的会话 Cookie
 
@@ -4559,28 +4575,34 @@ class Handler(BaseHTTPRequestHandler):
         return "write" if hmac.compare_digest(mac, expect) else ""
 
     def _level(self) -> str:
-        """本次请求的权限级别：回环与旧 token 都是全权，会话按其签发的级别。"""
-        if self._is_loopback():
-            return "write"
-        cookie = self.headers.get("Cookie") or ""
-        for part in cookie.split(";"):
-            k, _, v = part.strip().partition("=")
-            if k == SESSION_COOKIE:
-                lv = read_session(v)
-                if lv:
-                    return lv
-        if token_matches(self._token_from_req()):
-            return "write"
-        return self._peer_level()
+        """本次请求的权限级别；由 SecurityState.authorize() 在 gate 里写入。"""
+        auth = getattr(self, "_auth", None)
+        return auth.scope if auth is not None else ""
 
     def _authorized(self, required: str = "write") -> bool:
-        # 回环必须先判：remote_access() 看的是监听地址而不是请求来源，
-        # 顺序反了会让本机自己也进不来。
-        if self._is_loopback():
-            return True
-        if not remote_access():
+        auth = getattr(self, "_auth", None)
+        if auth is None:
             return False
-        return LEVEL_RANK.get(self._level(), 0) >= LEVEL_RANK.get(required, 2)
+        return LEVEL_RANK.get(auth.scope, 0) >= LEVEL_RANK.get(required, 2)
+
+    def _run_gate(self, method: str, path: str) -> bool:
+        """统一请求管线：回环也要认证；Host/Origin/CSRF/JSON 由 gate 统一判。"""
+        res = SECURITY.authorize(
+            method=method, path=path, headers=self.headers,
+            client_ip=self.client_address[0], loopback=self._is_loopback())
+        self._auth = res
+        if res.status == 200:
+            return True
+        extra = []
+        if res.status == 429:
+            extra.append(("Retry-After", str(max(1, int(res.retry_after or 1)))))
+        if res.status == 410:
+            extra.append(("X-Mozunitor-Gone", "use /api/session"))
+        self._send(res.status, {"error": res.error,
+                                "auth_required": res.status in (401, 403),
+                                "level": res.route.scope if res.route else ""},
+                   extra or None)
+        return False
 
     def _handle_auth(self, payload: dict) -> None:
         """登录：只给用户名换只读会话，用户名 + 密码换完整会话。
@@ -4632,6 +4654,67 @@ class Handler(BaseHTTPRequestHandler):
         self._set_session("write")
         self._send(200, {"ok": True, "username": user})
 
+    # -- 1.1.0 会话/初始化/安全面 ------------------------------------
+    def _client_ip(self) -> str:
+        return str(self.client_address[0])
+
+    def _ua(self) -> str:
+        return str(self.headers.get("User-Agent") or "")[:200]
+
+    def _auth_error(self, exc: SecurityAuthError) -> None:
+        extra = []
+        if exc.status == 429:
+            extra.append(("Retry-After", str(max(1, int(exc.retry_after or 1)))))
+        self._send(exc.status, {"ok": False, "error": exc.message}, extra or None)
+
+    def _handle_setup_complete(self, payload: dict) -> None:
+        try:
+            session, cookie = SECURITY.complete_setup(
+                str(payload.get("password") or ""),
+                str(payload.get("proof") or self.headers.get("X-Mozunitor-Launch") or ""),
+                client_ip=self._client_ip(), ua=self._ua())
+        except SecurityAuthError as exc:
+            self._auth_error(exc)
+            return
+        self._session_cookie = cookie
+        self._send(200, {"ok": True, "scope": session.scope, "csrf": session.csrf,
+                         "setup_done": True})
+
+    def _handle_session_login(self, payload: dict) -> None:
+        try:
+            session, cookie = SECURITY.login(
+                str(payload.get("password") or ""), client_ip=self._client_ip(),
+                ua=self._ua(), loopback=self._is_loopback())
+        except SecurityAuthError as exc:
+            self._auth_error(exc)
+            return
+        self._session_cookie = cookie
+        self._send(200, {"ok": True, "scope": session.scope, "csrf": session.csrf,
+                         "node": {"id": NODE_ID, "name": NODE_NAME},
+                         "version": SERVER_VERSION})
+
+    def _handle_session_launch(self, payload: dict) -> None:
+        try:
+            session, cookie = SECURITY.launch(
+                str(payload.get("token") or self.headers.get("X-Mozunitor-Launch") or ""),
+                client_ip=self._client_ip(), ua=self._ua())
+        except SecurityAuthError as exc:
+            self._auth_error(exc)
+            return
+        self._session_cookie = cookie
+        self._send(200, {"ok": True, "scope": session.scope, "csrf": session.csrf})
+
+    def _handle_password_change(self, payload: dict) -> None:
+        try:
+            SECURITY.change_password(str(payload.get("old") or ""),
+                                     str(payload.get("new") or ""),
+                                     client_ip=self._client_ip())
+        except SecurityAuthError as exc:
+            self._auth_error(exc)
+            return
+        self._session_cookie = SECURITY.clear_cookie_header()
+        self._send(200, {"ok": True, "relogin": True})
+
     def _send(self, code: int, body, ctype: str = "application/json; charset=utf-8",
               extra_headers: list | None = None) -> None:
         if isinstance(body, (dict, list)):
@@ -4644,6 +4727,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy",
+                         "default-src 'self'; img-src 'self' data:; "
+                         "style-src 'self' 'unsafe-inline'; "
+                         "script-src 'self' 'unsafe-inline'; connect-src 'self'")
         if self._session_cookie:
             # 登录或改凭据刚签发的会话，只附在这一次响应上
             self.send_header("Set-Cookie", self._session_cookie)
@@ -4681,19 +4771,29 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/static/"):
             self._serve_static(path[len("/static/"):])
             return
-        if path == "/api/auth":
-            self._handle_auth({"token": (query.get("token") or [""])[0]})
+        # 1.1.0：所有 /api/*（含回环）统一过 gate；不再有 loopback 免鉴权。
+        if not self._run_gate("GET", path):
             return
-        # 凭据端点自己只认回环，放在鉴权之前 —— 远端拿 403「只能本地改」比
-        # 401「需要更高权限」准确，否则用户会以为补个密码就能改。
-        if path == "/api/credentials":
-            self._handle_credentials(None)
-            return
-        need = LEVELS.get(path, "write")          # 未列出的端点一律按最高要求
-        if not self._authorized(need):
-            self._send(401, {"error": "需要更高权限", "auth_required": True, "level": need})
-            return
-        if path == "/api/state":
+        if path == "/api/setup/status":
+            self._send(200, {"needs_setup": SECURITY.needs_setup,
+                             "node": {"id": NODE_ID, "name": NODE_NAME},
+                             "version": SERVER_VERSION})
+        elif path == "/api/session":
+            auth = self._auth
+            self._send(200, {"scope": auth.scope if auth else "",
+                             "csrf": auth.session.csrf if auth and auth.session else "",
+                             "node": {"id": NODE_ID, "name": NODE_NAME},
+                             "version": SERVER_VERSION,
+                             "setup_done": not SECURITY.needs_setup})
+        elif path == "/api/security":
+            snap = SECURITY.snapshot()
+            snap["node"] = {"id": NODE_ID, "name": NODE_NAME}
+            snap["version"] = SERVER_VERSION
+            snap["network"] = {"enabled": False, "mode": "lan", "bind": "", "port": 0}
+            self._send(200, snap)
+        elif path == "/api/devices":
+            self._send(200, {"devices": []})
+        elif path == "/api/state":
             self._send(200, build_view())
         elif path == "/api/node":
             # 对等节点拉本机快照的入口；与 /api/state 分开，聚合各端自行完成
@@ -4716,29 +4816,42 @@ class Handler(BaseHTTPRequestHandler):
         if length > 65536:
             self._send(413, {"error": "请求体过大"})
             return
+        path = self.path.split("?", 1)[0]
+        if not self._run_gate("POST", path):
+            return
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
             self._send(400, {"error": "请求体不是合法 JSON"})
             return
-
-        # 唯一不需要授权的 POST：它要做的就是凭 token 换取 Cookie
-        if self.path.split("?", 1)[0] == "/api/auth":
-            self._handle_auth(payload if isinstance(payload, dict) else {})
-            return
-        # 同 do_GET：凭据端点自行判回环，先于级别检查
-        if self.path == "/api/credentials":
-            self._handle_credentials(payload if isinstance(payload, dict) else {})
-            return
-        need = LEVELS.get(self.path.split("?", 1)[0], "write")
-        if not self._authorized(need):
-            self._send(401, {"error": "需要更高权限", "auth_required": True, "level": need})
-            return
         if not isinstance(payload, dict):
             self._send(400, {"error": "请求体不是 JSON 对象"})
             return
 
-        if self.path in ("/api/restart", "/api/stop"):
+        # ---- 1.1.0 会话/初始化/安全面
+        if path == "/api/setup/complete":
+            self._handle_setup_complete(payload)
+            return
+        if path == "/api/session/login":
+            self._handle_session_login(payload)
+            return
+        if path == "/api/session/launch":
+            self._handle_session_launch(payload)
+            return
+        if path == "/api/session/logout":
+            SECURITY.logout(self._auth.session if self._auth else None)
+            self._session_cookie = SECURITY.clear_cookie_header()
+            self._send(200, {"ok": True})
+            return
+        if path == "/api/security/password":
+            self._handle_password_change(payload)
+            return
+        if path in ("/api/security/network", "/api/pair/start", "/api/pair/complete",
+                    "/api/devices/revoke"):
+            self._send(501, {"error": "该能力在 P3/P4 阶段接入（安全重构进行中）"})
+            return
+
+        if path in ("/api/restart", "/api/stop"):
             action = "stop" if self.path == "/api/stop" else "restart"
             node = str(payload.get("node") or "")
             if node and node != NODE_ID:
@@ -4897,13 +5010,20 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorized("read"):
             self._send(401, {"error": "需要更高权限", "auth_required": True, "level": "read"})
             return
-        self._send(200, settings_snapshot(self._is_loopback()))
+        auth = getattr(self, "_auth", None)
+        self._send(200, settings_snapshot(bool(auth and auth.scope == "admin")))
 
     def _handle_settings_post(self, payload: dict) -> None:
         if not self._authorized("write"):
             self._send(401, {"error": "需要更高权限", "auth_required": True, "level": "write"})
             return
         section = str(payload.get("section") or "")
+        # commands 段是“把节点变成任意命令执行”的唯一入口：要求 admin 且只允许本机。
+        if section == "commands":
+            auth = getattr(self, "_auth", None)
+            if not auth or auth.scope != "admin" or not self._is_loopback():
+                self._send(403, {"error": "命令字段只允许本机管理员修改"})
+                return
         values = payload.get("values") or {}
         loopback = self._is_loopback()
         via = "loopback" if loopback else "remote"
@@ -4988,18 +5108,12 @@ class Handler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------- 入口
 
 def main() -> int:
-    global TOKENS, SESSION_SECRET
-    host = CFG["listen"]["host"]
-    port = CFG["listen"]["port"]
+    host = LOCAL_HOST
+    port = LOCAL_PORT
 
-    TOKENS = load_tokens()
-    SESSION_SECRET = load_session_secret()
-    creds = load_credentials()
-    if creds.get("preset"):
-        # 只提醒，不阻塞：面板是后台服务，没有可交互的控制台。
-        # 改凭据必须在运行面板的这台机器上做，远端渠道一律禁止。
-        print(f"[凭据] 已生成随机预设账号：{creds.get('username')} / "
-              f"{creds.get('preset_password')} —— 请从本机打开面板后立即修改")
+    if SECURITY.needs_setup:
+        print(f"[初始化] 首次运行，setup code: {SECURITY.setup_code}")
+        print("[初始化] 壳内 launch token 可自动登录；外部浏览器需用 setup code 完成初始化")
 
     with STATE.lock:
         STATE.restart_log.extend(load_history())

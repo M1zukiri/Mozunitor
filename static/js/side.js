@@ -1,7 +1,7 @@
 // 详情侧边栏：指标头 → 操作区 → 下属 → 卡片显示 → 服务声明的面板 → 动作历史。
 // 骨架只在选中项变化时重建；其余时候只刷新轻量部分，滚动位置与面板内容不会被轮询冲掉。
 import { esc, fmtMB, fmtMs, fmtPct, fmtDur, agoIso } from './format.js';
-import { authFetch, authHeaders, authToken, IS_LOOPBACK } from './api.js';
+import { authFetch, authHeaders, IS_LOOPBACK } from './api.js';
 import {
   SEL, SEL_KEY, INFLIGHT, CARD_FIELDS, currentItem, childrenOf, effectiveCard,
   setSel, setSelKey, nextPaneSeq, findAnyItem,
@@ -95,9 +95,7 @@ function sideOps(it) {
   const hidden = [];
   if (!remote && it.fwd_port && !IS_LOOPBACK) {
     const host = location.hostname;
-    const token = host.endsWith('.ts.net') ? '' : authToken();
-    const url = `${location.protocol}//${host}:${it.fwd_port}/`
-      + (token ? `?token=${encodeURIComponent(token)}` : '');
+    const url = `${location.protocol}//${host}:${it.fwd_port}/`;
     buttons.push(`<button data-open="${esc(url)}" title="局域网入口 ${esc(host)}:${it.fwd_port}">局域网</button>`);
   }
   for (const op of (it.ops || [])) {
