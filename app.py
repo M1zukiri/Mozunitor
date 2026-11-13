@@ -428,7 +428,8 @@ def main() -> int:
                       icon=ensure_icon_file())
         return 1
 
-    port = int(monitor_server.CFG["listen"]["port"])
+    # 1.1.0 起 listen 可能写成 {local, network}；LOCAL_PORT 已由后端折算过旧格式。
+    port = int(monitor_server.LOCAL_PORT)
     external = panel_alive(port)
     if external:
         log(f"端口 {port} 上已有 Mozunitor 后端（外部进程），本应用只负责窗口与托盘")
