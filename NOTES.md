@@ -79,6 +79,18 @@
   （versionName=1.1.1，真机安装通过）。
 - 产物在 `temp/release-1.1.1/`；GitHub Release 上传仍需仓库 token，留给用户完成。
 
+### 2026-11-13 · M1K ↔ 本机节点互联实测（1.1.1）
+
+- 部署方式：M1K 用其 Windows Python 3.11（已装 cryptography）+ 同版本源码到
+  `D:\Mozunitor-1.1-test`，由 WMI 拉起的 `start-test.cmd` 保持进程不被 SSH 会话回收；
+  本机用公开树源码 + 临时 state（`temp/mesh`）。M1K 旧面板仍在 `0.0.0.0:8090`，未动。
+- 测试端口：本机 local 8092 / tailnet `100.85.213.22:8443`；M1K local 8091 / tailnet
+  `100.79.202.6:8444`，均 `allowed_cidrs: 100.64.0.0/10`。
+- 节点配对成功（一次性配对码 → 节点 token；TLS 自签证书指纹钉住），双向 mesh 拉取验证：
+  本机 `/api/state` 看到 M1K 在线、M1K `/api/state` 看到本机在线，双方 `/api/nodes` 均含对端。
+- 未改防火墙与自启动；8444/8091 只是测试端口。远程 GUI（托盘/窗口）在这条路径上未验证，
+  本次只跑后端。
+
 ### 2026-11-13 · 1.1.0 首次构建（历史记录）
 - 发布产物（1.1.0，重建于纯 ASCII 路径）：
   - `Mozunitor-1.1.0-portable.exe` 70,670,860 B，
