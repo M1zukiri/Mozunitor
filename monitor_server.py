@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from mozunitor import tls as mtls
 from mozunitor.net.listeners import (NetworkConfig, NetworkConfigError, NetworkServer,
                                      default_bind, ensure_allowed, ip_in_cidrs,
-                                     parse_cidrs, serve_in_thread)
+                                     network_category, parse_cidrs, serve_in_thread)
 from mozunitor.net.listeners import stop as stop_network_server
 from mozunitor.security import nodes as peer_nodes
 from mozunitor.security.state import AuthError as SecurityAuthError
@@ -162,12 +162,20 @@ LOCAL_PORT = int(_LOCAL_LISTEN.get("port") or 8090)
 MIGRATION_NOTE = ""
 if _LEGACY_LISTEN and LOCAL_HOST not in ("127.0.0.1", "localhost", "::1"):
     _legacy_bind = "" if LOCAL_HOST in ("0.0.0.0", "::", "*") else LOCAL_HOST
-    try:
-        _legacy_bind = _legacy_bind or default_bind("lan")
-    except NetworkConfigError:
-        _legacy_bind = ""
+    _legacy_mode = "lan"
+    if not _legacy_bind:
+        # 未指定地址时按网络类别挑：公用网络上的 LAN 地址会被 ensure_allowed 拒绝，
+        # 这种情况下退到 tailnet；两处都不可用就留空，由启动阶段如实报错。
+        for _mode in ("lan", "tailnet"):
+            try:
+                _cand = default_bind(_mode)
+            except NetworkConfigError:
+                continue
+            if network_category(_cand) != "Public":
+                _legacy_bind, _legacy_mode = _cand, _mode
+                break
     LOCAL_HOST = "127.0.0.1"
-    NETWORK_CFG = NetworkConfig(enabled=True, mode="lan", bind=_legacy_bind,
+    NETWORK_CFG = NetworkConfig(enabled=True, mode=_legacy_mode, bind=_legacy_bind,
                                 port=NetworkConfig().port)
     MIGRATION_NOTE = ("原配置 listen.host 为非回环地址，已迁移为 HTTPS 网络入口；"
                       "请按提示确认证书指纹")
@@ -5376,6 +5384,7 @@ class Handler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------- 入口
 
 def main() -> int:
+    global NETWORK_CFG
     host = LOCAL_HOST
     port = LOCAL_PORT
 
@@ -5395,13 +5404,13 @@ def main() -> int:
                discover_loop, peer_poll_loop, keepalive_loop):
         threading.Thread(target=fn, daemon=True).start()
 
-    open_proxy_listeners()
-
     if NETWORK_CFG.enabled:
         try:
             apply_network_config(NETWORK_CFG, persist=False)
         except (NetworkConfigError, OSError) as exc:
             print(f"[网络] 网络入口启动失败，仅保留本机入口：{exc}")
+            NETWORK_CFG = NetworkConfig()
+            SECURITY.set_network(NETWORK_CFG)
 
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
