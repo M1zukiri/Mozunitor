@@ -103,3 +103,22 @@
     本机未配置 token，留给用户在网页/`gh` 完成。
 - 构建注意：exe 直接用 PyInstaller 默认路径即可；APK release 必须纯 ASCII 工作路径，
   先 `flutter pub get` 一次，之后用 `--no-pub` 避免反复联网解析。
+### 2026-11-14 · 1.1.x 公开树补回 ops 工具链（exe 实测）
+
+- `app.py` 启动取端口改用 `monitor_server.LOCAL_PORT`：旧写法只认 `listen.port`，而设置页
+  保存网络配置后 `listen` 变成 `{local, network}`，exe 会因此静默退出（窗口化无控制台）。
+- 从存档树移植到公开树：`tools/ops/`（7 个脚本）、`tools/update.py`、
+  `tools/reload_panel.py`、`tools/check_bom.py`。脱敏与适配：
+  - `m1k-bonsai/status.ps1` 不再写死地址，改读 `MOZU_BONSAI_BASE`；`services.json` 的 op
+    声明可带 `env`，由 `run_script_op` 下发给脚本。
+  - `_panel-lib.ps1` 的 `Get-MozuRoot` 优先 `MOZU_ROOT`（打包后脚本在临时解包目录）。
+  - `update.py` 更新源改为公开仓库 URL，版本正则兼容 `SERVER_VERSION` 写法；
+    `reload_panel.py` 读 `listen.local.port`，就绪判据改 `GET /`。
+- 实测（源码实例 8096 + 打包 exe 各一轮）：`/api/state` 正常下发 5 个服务的 ops；
+  `flclash net`、`sillytavern diag`、`m1k-ollama vram`、`m1k-bonsai status` 均返回 sections，
+  连不上时如实报错；`panel status` 走通 `update.py --status`（本机代理关闭时正确报远端不可达）。
+- 已知限制：exe 安装目录没有 `tools/update.py` 与 `tools/reload_panel.py`，打包版
+  `panel status` 会如实报找不到脚本；exe 下的「自更新/重载」需要单独设计 —— 单文件 exe
+  应下载 Release 资产，而不是同步源码文件。
+- `tools/check_ops.py` 未移植（依赖旧前端夹具与 Edge/Playwright，与新前端不匹配）；
+  `check_bom.py` 已可用，7 个 ops 脚本 BOM 全 OK。安全自测仍全 PASS（147 / 55）。
