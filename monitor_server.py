@@ -3819,6 +3819,10 @@ def run_script_op(svc: dict, op: dict, payload: dict | None = None) -> dict:
     for k, v in (payload or {}).items():
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(k)):
             env[f"MOZU_FIELD_{str(k).upper()}"] = str(v)
+    # op 自己声明的环境变量：配置态地址（如远端监督进程）从这里下发，脚本里不留私有地址。
+    for k, v in (op.get("env") or {}).items():
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(k)):
+            env[str(k)] = str(v)
 
     timed_out = False
     code = 0

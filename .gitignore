@@ -31,3 +31,4 @@ release/
 
 # 本地隔离实例与测试产物
 temp/
+.update/
