@@ -122,3 +122,21 @@
   应下载 Release 资产，而不是同步源码文件。
 - `tools/check_ops.py` 未移植（依赖旧前端夹具与 Edge/Playwright，与新前端不匹配）；
   `check_bom.py` 已可用，7 个 ops 脚本 BOM 全 OK。安全自测仍全 PASS（147 / 55）。
+### 2026-11-14 · 1.1.x 生产首启演练（exe，8090/8443）
+
+- 正式目录 `Mozunitor-prod`（exe + 真实 21 服务配置），配置显式走 tailnet 入口：
+  local `127.0.0.1:8090`、network `100.85.213.22:8443`、CIDR `100.64.0.0/10`；
+  转发 8102–8105 绑定 tailnet 地址。演练时暂时清空 peers、关闭 relay、去掉 keepalive，
+  避免触发 M1K 侧服务拉起。
+- 实测：本地/HTTPS 均 200；未登录 `/api/state` 401；8000 段外的转发端口无 ticket 401；
+  `POST /api/forward/ticket` 签票后带 `?mozu_ticket=` 可代理到 gemini（返回模型列表）。
+  21 服务、4 组、tier 统计与真实运维配置一致；`/api/state` 里 7 个脚本 op 全部在列。
+- 演练中发现并修复：本机 WLAN 属「公用网络」，旧 `listen.host=0.0.0.0` 迁移会挑到
+  10.71.158.223（Public）→ `ensure_allowed` 拒绝开网络入口，但旧代码仍把网络配置报成
+  已启用、且提前开了转发代理端口。修复：迁移时优先选非 Public 地址（LAN 不可用退到
+  tailnet）；启动失败时真正关闭网络配置，并改为在网络入口起好之后才开转发代理。
+  154/55 两类安全自测仍全 PASS。
+- 首启初始化已完成（管理员口令由用户在窗口内设置）；证书指纹
+  `BE:8A:0F:53:F7:14:8D:58:01:2F:31:0E:50:FC:7A:2D:40:6B:DF:15:21:26:57:70:59:A2:F7:CF:BE:82:00:F9`。
+- 待办：重建 1.1.2 exe（含 app.py / 迁移 / ops 修复）、恢复 relay 与 keepalive、
+  按 1.1 节点配对重新接入 M1K、配自启动与旧面板退役。
