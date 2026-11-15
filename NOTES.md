@@ -268,3 +268,6 @@
   （此前从 shell 拉起会把面板放进带 KILL_ON_JOB_CLOSE 的 Job），M1K 用计划任务。双端 1.1.6，
   节点在线；终态 20/21 在线（仅 uu-local 红），m1k-hust 无保活动作。
 - 配置改动备份在 `temp/audit/backups/`（本机与 M1K 各一份，已 gitignore）。
+- M1K 侧按用户要求改法：`dsh` 改成进程探测桌面 `DeepSeek Harness`（不再盯已不监听的 19387），
+  并新增 `dsh-remote` 条目监控面板中继监听 `127.0.0.1:29387`（→ Pocket 3081，供本机 relay-dsh 消费）。
+  M1K 面板现 `dsh`/`dsh-remote`/`pocket` 全绿，本机对端快照同步可见。
