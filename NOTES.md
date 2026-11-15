@@ -196,3 +196,10 @@
 - 同步：前端门禁只显示「口令 / 确认口令」，后端去掉 `setup_code` 与 `MOZU_SETUP_CODE`，
   SPEC / MIGRATION / README 相应改写；core 与 http 自测全 PASS。
 - 1.1.3 发布资产仍带 setup code 流程，1.1.4 起以口令为准。
+
+**1.1.4 发布产物**（2026-11-15）：
+- `Mozunitor-1.1.4-portable.exe` 28,220,223 B，
+  sha256 `f78f5eee46c1044fcb2547ed8567d41b34f7e5ba81c0feaf5861e6d853a655f1`；
+  本机与 M1K 均已换成该版本。
+- Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.1.4（仅 exe，APK 待手机恢复）。
+- M1K 在 1.1.3 阶段已完成初始化（18:32:45，来源 100.85.213.22），1.1.4 升级后沿用该口令。
