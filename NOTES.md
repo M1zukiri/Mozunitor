@@ -181,3 +181,9 @@
   且 Cookie 带 Secure；初始化完成后重复调用仍返回 409。
 - 自测同步更新：core 全 PASS、http 全 PASS（新增「网络初始化状态可读 / 完成后拒绝再次初始化」）。
 - 1.1.2 发布资产不含此修复，留给 1.1.3 一起发（APK 仍待手机恢复）。
+
+**1.1.3 发布产物**（2026-11-15）：
+- `Mozunitor-1.1.3-portable.exe` 28,189,892 B，
+  sha256 `9d197cf95b45c07fab49ad359f1b1db3dfcf04743d2d4ad01296857d8e3e7504`；
+  本机与 M1K 生产实例均已换成该版本。
+- Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.1.3（仅 exe，APK 待手机恢复）。
