@@ -35,6 +35,13 @@ contexts: -
 - 口令只存 `scrypt` 哈希；token/会话密钥落盘时收紧 ACL；不写日志、不进查询串。
 - 旧 `?token=`、`/api/auth`、`/api/credentials` 一律 410，不做兼容层。
 
+## 范围：当前只做电脑端（2026-11-15 起）
+
+- 手机（Android / Flutter）端**暂停**：手机意外损坏，APK 开发与真机验证搁置，恢复时间由用户决定。
+- 当前只维护电脑端：Windows 托盘应用（`app.py` + `monitor_server.py`）与面板前端。
+- `mobile/` 源码保留在仓库，但不随版本发布、不作为验收门槛；发布资产只含 exe。
+- 电脑端（桌面 / 局域网 / Tailnet、节点互联、forwards ticket、ops）照常推进。
+
 ## 只读边界
 
 被监控服务可以读，任何情况下不写：
