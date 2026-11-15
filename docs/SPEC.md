@@ -1,7 +1,6 @@
-# SPEC · Mozunitor 安全架构（1.1.0）
+# SPEC · Mozunitor 安全架构（1.1.x）
 
-> 本文件记录已实现的架构与不变量；执行过程用的工单在 `docs/archive/SPEC-security-hardening.md`。
-> 改动安全相关代码前先读本文件与 `AGENTS.md`。
+> 本文件记录已实现的架构与不变量；改动安全相关代码前先读本文件与 `AGENTS.md`。
 
 ## 1. 威胁模型
 
@@ -59,7 +58,7 @@
 | 方法/路径 | scope | listener | 说明 |
 | --- | --- | --- | --- |
 | `GET /`、`/static/*` | 无 | any | 静态资源 |
-| `GET /api/setup/status` | 无 | local | needs_setup / 节点名 / 版本 |
+| `GET /api/setup/status` | 无 | any | needs_setup / 节点名 / 版本 |
 | `POST /api/setup/complete` | 无 | any | 设管理员口令（仅未初始化时；网络入口按白名单来源限流） |
 | `POST /api/session/login` | 无 | any | 口令 → 会话（限流） |
 | `POST /api/session/launch` | 无 | local | launch token → 会话 |
@@ -70,6 +69,7 @@
 | `GET /api/security`、`/api/devices`、`/api/nodes` | admin/read | any | 安全状态、设备、节点 |
 | `POST /api/security/network`、`/api/security/password`、`/api/nodes/pair`、`/api/nodes/revoke`、`/api/devices/revoke` | admin | local | 仅本机管理面 |
 | `POST /api/pair/start`、`/api/nodes/pair/start` | admin | any | 生成一次性配对码 |
+| `POST /api/forward/ticket` | read | any | 短 TTL 转发 ticket（CSRF） |
 | `POST /api/pair/complete`、`/api/nodes/pair/complete` | 无 | network | 配对码换 token（限流） |
 | 旧 `/api/auth`、`/api/credentials`、`?token=` | — | — | 410 Gone |
 
@@ -89,7 +89,6 @@
   },
   "security": {"session_ttl_s": 1800, "session_max_age_s": 2592000,
                "login_window_s": 300, "login_max_failures": 5, "lockout_s": 300},
-  "access": {"local_token_file": ".state/local-token"},
   "node": {"id": "...", "name": "..."},
   "peers": {"list": []},
   "relay": {"...": "..."}, "forwards": {"...": "..."},
@@ -109,10 +108,10 @@
 - 被监控服务默认只读；写只经 `settings` 白名单，确认 + 审计。
 - 既有功能（面板/详情/设置/ops/保活/中继）不回归；验收命令见 `AGENTS.md`。
 
-## 9. 验收记录（1.1.0）
+## 9. 验收记录（1.1.x）
 
-- `python tools/security_selftest.py`：139 项全 PASS（口令/会话/路由/CSRF/限流/审计/身份/配对/TLS/网络）。
-- `python tools/security_http_selftest.py`：50 项全 PASS（隔离实例 + 真实 HTTPS listener；含双实例节点配对、mesh 拉取、未配对 401、吊销）。
+- `python tools/security_selftest.py`：147 项全 PASS（口令/会话/路由/CSRF/限流/审计/身份/配对/TLS/网络）。
+- `python tools/security_http_selftest.py`：55 项全 PASS（隔离实例 + 真实 HTTPS listener；含双实例节点配对、mesh 拉取、未配对 401、吊销、网络入口初始化）。
 - 浏览器冒烟：setup → 面板 → 刷新保持登录；设置页安全分节（网络/证书指纹/会话/设备/节点配对）无 JS 异常。
 - 便携 exe：PyInstaller onefile 构建并在隔离目录启动（生成 services.json/.state/logs，回环 8090 正常）。
 - forwards：改为短 TTL ticket。`POST /api/forward/ticket`（read + CSRF）签发 60 秒、限次、

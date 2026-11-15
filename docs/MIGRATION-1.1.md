@@ -1,4 +1,4 @@
-# MIGRATION · 1.0.0 → 1.1.0
+# MIGRATION · 1.0.0 → 1.1.x
 
 1.1.0 是**破坏性**安全重构：旧的访问 token、`/api/auth`、`/api/credentials` 与回环免鉴权全部移除。
 升级后需要重新初始化面板并重新配对节点。

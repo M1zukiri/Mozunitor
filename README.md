@@ -1,7 +1,7 @@
 # Mozunitor
 
-一个本地优先的 Windows 常驻服务监控面板：托盘常驻，浏览器/内嵌窗口查看本机与对端节点的服务状态，
-卡片式操作，支持分级告警、服务参数调整与 SSH 中继。
+一个本地优先的 Windows 常驻服务监控面板：托盘常驻，浏览器/内嵌窗口查看本机与已配对对端节点的
+服务状态，卡片式操作，支持分级告警、服务参数调整与 SSH 中继。
 
 
 ## 特性
@@ -97,9 +97,11 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --name Mozunitor 
   --add-data "services.example.json;." app.py
 ```
 
+完整命令（含体积优化用的 `--exclude-module`）与发布流程见 `AGENTS.md`。
+
 ## 安全说明
 
-- 默认只监听回环；回环也要认证（setup/launch/管理员口令/本地 token）。
+- 默认只监听回环；回环也要认证（launch/管理员口令/本地 token）。
 - 网络访问必须显式开启 HTTPS 网络入口，来源受 CIDR 白名单限制，Public 网络拒绝开启。
 - 管理员口令只存 scrypt 哈希；设备/节点 token 只存 SHA256；自签证书指纹可在安全页查看。
 - 首次启动只需设置管理员口令（1.1.4 起没有 setup code）。

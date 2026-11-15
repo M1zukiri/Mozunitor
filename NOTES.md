@@ -1,9 +1,10 @@
 # NOTES · Mozunitor
 
-## 当前状态（2026-11-13）
+## 当前状态（2026-11-15）
 
-- 版本 **1.1.4**（B 位：安全重构 + ops 工具链 + 生产切换修复；初始化只要管理员口令）。开发基线为公开 1.0.0。开发分支 `refactor/security`，按
-  `docs/SPEC-security-hardening.md` 执行；B 位目标 **1.1.0**。
+- 版本 **1.1.4**（A=1 固定；B 位随功能/修复升）。单 Windows 桌面应用，手机端源码与文档已移除。
+- 开发分支 `refactor/security`；设计依据 `docs/SPEC.md`，硬约束 `AGENTS.md`，使用说明 `README.md`。
+- 生产实例：本机 `个人\Mozunitor-prod`、M1K `D:\Mozunitor-prod`，均为 1.1.4；节点互联双向在线。
 
 ## 进度记录
 
@@ -203,3 +204,15 @@
   本机与 M1K 均已换成该版本。
 - Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.1.4（仅 exe，APK 待手机恢复）。
 - M1K 在 1.1.3 阶段已完成初始化（18:32:45，来源 100.85.213.22），1.1.4 升级后沿用该口令。
+### 2026-11-15 · 结构与文档收敛
+
+- 只保留活跃项目 `个人\Mozunitor`（19 MB）与运行中的部署目录 `个人\Mozunitor-prod`；
+  旧存档树 2.8 GB（含 `.git` 与 v3.x tag）按用户授权删除。
+- 仓库移除 `mobile/` 与手机相关文档；删除构建/临时产物（`temp/`、`dist/`、`build/`、`logs/`、
+  `.state/`、`__pycache__`、旧 `Mozunitor.spec`）与旧启动器（`start-monitor.bat`、
+  `start-monitor-hidden.vbs`）、旧界面截图；`.gitignore` 去掉 Flutter 段。
+- `tools/reload_panel.py` 改为优先拉起 `Mozunitor.exe`（源码安装退回 `app.py`）；`tools/update.py`
+  去掉已删除启动器的保护项与 `deploy/` 跳过项。
+- 计划任务 `Mozunitor-Backup` 指向已删除的存档脚本，已删除该任务。
+- 重写 `AGENTS.md` 为 1.1.4 事实（架构 / 安全 / ops / 进程 / 保活中继 / 构建发布 / 测试 / 平台坑）；
+  README、SPEC、MIGRATION、`services.example.json` 同步到桌面端现状。
