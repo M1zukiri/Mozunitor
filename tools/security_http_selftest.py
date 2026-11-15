@@ -89,7 +89,7 @@ class Client:
 
 
 def main() -> int:
-    print("=== security http selftest (1.2.0 check) ===")
+    print("=== security http selftest (1.3.0 check) ===")
     tmp = Path(tempfile.mkdtemp(prefix="mozu-p2-"))
     cfg = tmp / "services.json"
     state = tmp / "state"

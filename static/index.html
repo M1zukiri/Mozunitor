@@ -4,8 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Mozunitor · 常驻服务监控</title>
+<script>
+// 主题在样式表之前落定，避免首屏闪一下默认皮肤；值来自 themes.js 的 localStorage 键。
+try {
+  var t = localStorage.getItem('mozunitor.theme');
+  if (t && t !== 'cyan') document.documentElement.dataset.theme = t;
+} catch (e) { /* 隐私模式读不到就用默认 */ }
+</script>
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/theme.css">
+<link rel="stylesheet" href="/static/themes.css">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>

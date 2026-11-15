@@ -9,7 +9,7 @@ domains: -
 contexts: -
 -->
 
-Windows 桌面监控面板：托盘应用 + 本机 HTTP 服务 + 无构建前端；每台机器各跑一份，已配对节点互读状态，没有中心节点。公开仓库 `M1zukiri/Mozunitor`，当前 **1.2.0**（A=1 固定；B 位随功能/修复升，C 位是计划内检查点）。
+Windows 桌面监控面板：托盘应用 + 本机 HTTP 服务 + 无构建前端；每台机器各跑一份，已配对节点互读状态，没有中心节点。公开仓库 `M1zukiri/Mozunitor`，当前 **1.3.0**（A=1 固定；B 位随功能/修复升，C 位是计划内检查点）。
 
 全局基线见 `~/.dsh/AGENTS.md`（第 0 节 profile 取用协议）。本文件只记本项目硬约束与坑；使用说明见 `README.md`，设计依据与实测见 `docs/SPEC.md`，进度见 `NOTES.md`。
 
@@ -17,7 +17,7 @@ Windows 桌面监控面板：托盘应用 + 本机 HTTP 服务 + 无构建前端
 
 - 后端 `monitor_server.py` + `mozunitor/`（`security/` 身份与鉴权、`net/listeners.py` 监听面、`tls.py` 证书），只用标准库；唯一外部依赖 `cryptography`（TLS 与密钥）。
 - 入口 `app.py`：`pywebview` + `pystray` + `pillow`，后端同进程。Session 0 / SSH 等无交互桌面场景自动跳过窗口与托盘，只跑后端与对等互联（`has_interactive_desktop()` 的 `restype` 必须显式声明，否则判据静默失效）。
-- 前端无构建：`static/app.js` 入口，`static/js/` 按职责拆 ES modules（服务图标在 `icons.js`，可被 `services.json` 的 `icon` 覆盖）；`theme.css` 是 industrial-pixel-ui 主题原样副本（换皮只改它），`style.css` 只写本页布局。
+- 前端无构建：`static/app.js` 入口，`static/js/` 按职责拆 ES modules（服务图标在 `icons.js`，可被 `services.json` 的 `icon` 覆盖）；`theme.css` 是 industrial-pixel-ui 主题原样副本，不直接改；皮肤都由 `themes.css` 按 `html[data-theme]` 重映射 token（`themes.js` 管选择与本设备记忆），`style.css` 只写本页布局。
 - 部署形态：单文件 exe（PyInstaller onefile）。代码与静态资源在 `_MEIPASS`，可写状态（`services.json`、`.state/`、`logs/`）落 exe 旁边；`ROOT` 是安装目录，`BUNDLE_DIR` 是解包目录，两者不可混用。
 
 ## 安全（1.1 起）

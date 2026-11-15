@@ -1,0 +1,119 @@
+/* Mozunitor 主题覆盖：theme.css 保持 industrial-pixel-ui 原样，这里只重映射 token。
+   每个主题的锚点色取自《配色设计速查手册》，其余 token 由锚点按明度/混色推导。 */
+
+/* 海军蓝 · 深海军蓝机壳 + 薄荷纸面 · 海军蓝·五色（第 3 组） */
+html[data-theme="navy"] {
+  --bg: #000c1e;
+  --bg-2: #001c48;
+  --panel: #c9e4e3;
+  --panel-2: #8da9b7;
+  --panel-3: #e0efef;
+  --ink: #001638;
+  --ink-soft: #3c546b;
+  --ink-mute: #698191;
+  --ink-faint: #496176;
+  --edge: #000a19;
+  --shell-ink: #d6ebea;
+  --shell-dim: #768fa5;
+  --amber: #83b7bd;
+  --amber-ink: #000e24;
+  --red: #bd402d;
+  --red-ink: #933223;
+  --ok: #2f6b4f;
+  --ok-ink: #25533e;
+  --warn: #8a5f12;
+  --warn-ink: #6c4a0e;
+  --info: #005da1;
+  --info-ink: #003f6d;
+  --shell-danger-bg: #171117;
+  --shell-warn-bg: #161415;
+  --shell-line: #2c4a70;
+  --shell-danger: #d8a69d;
+  --shell-warn: #d1bf9a;
+  --shell-body: #cfe7e6;
+  --shell-body-warn: #d5e3d5;
+  --on-danger: #faf0ee;
+  --sel: #005da1;
+  --sel-ink: #e9f2f2;
+  --mark-ok: #8dae9e;
+  --mark-warn: #ab8c54;
+  --mark-bad: #cc6a5b;
+}
+
+/* 暗夜色 · 暖黑机壳 + 藕粉纸面 · 暗夜色·五色（第 1 组） */
+html[data-theme="night"] {
+  --bg: #1f1a1d;
+  --bg-2: #3b363c;
+  --panel: #e3d7d0;
+  --panel-2: #bbb1ad;
+  --panel-3: #ede5e0;
+  --ink: #292529;
+  --ink-soft: #615b5b;
+  --ink-mute: #8a8280;
+  --ink-faint: #625c5c;
+  --edge: #100f10;
+  --shell-ink: #eae1dc;
+  --shell-dim: #a79fa0;
+  --amber: #cec3a3;
+  --amber-ink: #211f22;
+  --red: #b68680;
+  --red-ink: #725450;
+  --ok: #6f8984;
+  --ok-ink: #4e605d;
+  --warn: #a15525;
+  --warn-ink: #7e421d;
+  --info: #5f7e87;
+  --info-ink: #41565c;
+  --shell-danger-bg: #231716;
+  --shell-warn-bg: #201a14;
+  --shell-line: #6c6468;
+  --shell-danger: #e4a095;
+  --shell-warn: #ddb992;
+  --shell-body: #e6dcd6;
+  --shell-body-warn: #e7dac8;
+  --on-danger: #352725;
+  --sel: #4a444b;
+  --sel-ink: #efe6df;
+  --mark-ok: #b0bebb;
+  --mark-warn: #bb8562;
+  --mark-bad: #c6a19c;
+}
+
+/* 极简灰 · 无色彩系三锚（暗夜色 / 珍珠灰 / 贝色）中和为纯灰 */
+html[data-theme="mono"] {
+  --bg: #141414;
+  --bg-2: #232323;
+  --panel: #e7e6e3;
+  --panel-2: #d4d3d1;
+  --panel-3: #edecea;
+  --ink: #292529;
+  --ink-soft: #625f61;
+  --ink-mute: #8c8a8a;
+  --ink-faint: #696668;
+  --edge: #0f0f0f;
+  --shell-ink: #edecea;
+  --shell-dim: #a4a1a2;
+  --amber: #bfbeb9;
+  --amber-ink: #211f22;
+  --red: #7a3f3a;
+  --red-ink: #5f312d;
+  --ok: #3f5f4a;
+  --ok-ink: #314a3a;
+  --warn: #7a6a3f;
+  --warn-ink: #5f5331;
+  --info: #8f8f93;
+  --info-ink: #616164;
+  --shell-danger-bg: #231716;
+  --shell-warn-bg: #201a14;
+  --shell-line: #6b6b6b;
+  --shell-danger: #e6a79d;
+  --shell-warn: #dfc09a;
+  --shell-body: #eae9e6;
+  --shell-body-warn: #eae4d5;
+  --on-danger: #f4f0ef;
+  --sel: #26262a;
+  --sel-ink: #f0efec;
+  --mark-ok: #95a79b;
+  --mark-warn: #9f9475;
+  --mark-bad: #976965;
+}

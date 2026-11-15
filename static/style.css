@@ -27,12 +27,12 @@ body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto
 .mark-svg { width: 26px; height: 26px; }
 .mark-frame { fill: var(--panel); }
 .mark-pupil {
-  fill: var(--ok);
+  fill: var(--mark-ok, var(--ok));
   transform-box: fill-box; transform-origin: center;
   animation: pupil-wander 7.5s steps(1, end) infinite;
 }
-.brand-mark[data-state="warn"] .mark-pupil { fill: var(--amber); animation-duration: 4.5s; }
-.brand-mark[data-state="bad"] .mark-pupil { fill: var(--red); animation-duration: 2.6s; }
+.brand-mark[data-state="warn"] .mark-pupil { fill: var(--mark-warn, var(--amber)); animation-duration: 4.5s; }
+.brand-mark[data-state="bad"] .mark-pupil { fill: var(--mark-bad, var(--red)); animation-duration: 2.6s; }
 @keyframes pupil-wander {
   0%, 8% { transform: translate(0, 0); }
   14%, 24% { transform: translate(2px, -1px); }
@@ -150,14 +150,14 @@ body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto
 .svc:last-child { border-bottom: 0; }
 .svc:hover { background: rgba(255, 255, 255, .3); }
 .svc:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
-.svc.selected { background: var(--amber); }
+.svc.selected { background: var(--sel, var(--amber)); }
 .svc.down { border-left-color: var(--red); }
 .svc.unknown { border-left-color: var(--ink-mute); }
 .svc.norecovery { border-left-color: var(--amber); }
 .svc.norecovery.down { border-left-color: var(--red); }
 .svc.jump { animation: jump-flash 1.6s steps(1, end); }
 @keyframes jump-flash {
-  0%, 45% { background: var(--amber); }
+  0%, 45% { background: var(--sel, var(--amber)); }
   46%, 100% { background: transparent; }
 }
 
@@ -192,8 +192,8 @@ body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto
 .svc.selected.down .svc-state { color: var(--red-ink); }
 .svc.selected .noterow { border-left-color: rgba(15, 26, 28, .5); }
 .svc.selected .warnrow { border-left-color: var(--edge); }
-.svc.selected .dep { color: var(--ink); border-color: rgba(15, 26, 28, .5); }
-.svc.selected .dep.bad { color: var(--red-ink); border-color: var(--red-ink); background: transparent; }
+.svc.selected .dep { color: var(--sel-ink, var(--amber-ink)); border-color: rgba(15, 26, 28, .5); }
+.svc.selected .dep.bad { color: var(--mark-bad, var(--red)); border-color: var(--mark-bad, var(--red)); background: transparent; }
 .svc.selected .badge { background: var(--panel); border-color: var(--edge); color: var(--ink); }
 
 /* 置顶星标：行内小按钮，不参与全局按钮的「▸」前缀与 30px 高度 */
@@ -236,6 +236,12 @@ body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto
   font-size: 10.5px; line-height: 1.55; color: var(--warn-ink);
 }
 .warnrow.bad { border-left-color: var(--red); color: var(--red-ink); }
+
+/* 状态徽章小字走 *-ink：浅纸面上要 AA，主题只重映射 token */
+.badge--ok { color: var(--ok-ink); }
+.badge--info { color: var(--info-ink); }
+.badge--warning { color: var(--warn-ink); }
+.badge--blocked { color: var(--red-ink); }
 
 /* ---------------------------------------------------------------- 按钮 */
 /* 列表里按钮密，桌面 30px；侧边栏 34px；touch 断点统一抬到 44px。 */
@@ -444,6 +450,20 @@ pre.optext.prose { font-family: inherit; font-size: 12px; line-height: 1.65; }
 .pref-group:first-child { border-top: 0; padding-top: 0; }
 .pref-group-head { font-size: 11px; font-weight: 700; color: var(--ink); padding: 2px 0; }
 .tier-tag { font-size: 10px; padding: 0 4px; line-height: 1.5; }
+
+/* 设置页 · 主题选择 */
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 6px; }
+.theme-pick {
+  flex-direction: column; align-items: stretch; gap: 4px;
+  height: auto; padding: 6px 7px; text-align: left;
+}
+.theme-pick::before { content: none; }
+.theme-pick .chips { display: flex; gap: 3px; }
+.theme-pick .chip { width: 20px; height: 14px; border: 1px solid var(--edge); }
+.theme-pick .tname { font-size: 12px; font-weight: 700; }
+.theme-pick .tsrc { font-size: 9.5px; color: var(--ink-faint); white-space: normal; line-height: 1.35; }
+.theme-pick.is-active { background: var(--sel, var(--amber)); }
+.theme-pick.is-active .tname, .theme-pick.is-active .tsrc { color: var(--sel-ink, var(--amber-ink)); }
 
 /* ---------------------------------------------------------------- 模态 */
 .modal { background: rgba(4, 8, 9, .86); }

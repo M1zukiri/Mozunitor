@@ -8,6 +8,7 @@ import {
   globalCardPrefs, setGlobalCardPref, resetGlobalCardPrefs,
   mobileHideOptional, setMobileHideOptional, machineBlocks, tierItems, tierStats,
 } from './state.js';
+import { THEMES, currentTheme, setTheme } from './themes.js';
 
 const $ = (s) => document.querySelector(s);
 let PANEL = null;
@@ -31,6 +32,19 @@ function cardPrefFields() {
     return `<label class="pref"><input type="checkbox" data-pref-card="${f.id}"${on ? ' checked' : ''}>`
       + ` ${f.label}</label>`;
   }).join('');
+}
+
+function themeSection() {
+  const cur = currentTheme();
+  return '<h3 class="sec">主题</h3><div class="theme-grid">'
+    + THEMES.map((t) => `<button type="button" class="theme-pick${t.id === cur ? ' is-active' : ''}"`
+      + ` data-theme-pick="${t.id}" title="${esc(t.src)}">`
+      + `<span class="chips">`
+      + t.chips.map((c) => `<span class="chip" style="background:${c}"></span>`).join('')
+      + '</span>'
+      + `<span class="tname">${esc(t.label)}</span>`
+      + `<span class="tsrc">${esc(t.src)}</span></button>`).join('')
+    + '</div>';
 }
 
 function pinnedRows() {
@@ -344,6 +358,8 @@ async function revokeNode(id) {
 }
 
 document.addEventListener('click', (e) => {
+  const themeBtn = e.target.closest('[data-theme-pick]');
+  if (themeBtn) { setTheme(themeBtn.dataset.themePick); renderSettings(); return; }
   if (e.target.closest('[data-save-network]')) { saveNetwork(netValues()); return; }
   if (e.target.closest('[data-rotate-cert]')) { saveNetwork(netValues({ rotate_cert: true })); return; }
   if (e.target.closest('[data-save-password]')) { savePassword(); return; }
@@ -365,6 +381,7 @@ export function renderSettings() {
       <h3 class="sec">卡片显示</h3>
       <div class="cardprefs">${cardPrefFields()}</div>
       <button class="ghost" type="button" data-card-reset-global="1">恢复默认字段</button>
+      ${themeSection()}
       <h3 class="sec">窄屏</h3>
       <label class="pref"><input type="checkbox" data-pref-mobile="1"${mobileHideOptional() ? ' checked' : ''}>
         窄屏下隐藏「按需」组</label>
