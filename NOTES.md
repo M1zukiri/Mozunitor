@@ -2,9 +2,9 @@
 
 ## 当前状态（2026-11-15）
 
-- 版本 **1.3.0**（A=1 固定；B 位随功能/修复升）。单 Windows 桌面应用。
+- 版本 **1.1.5**（A=1 固定；A/B 只在用户要求升阶段时改，日常功能/修复走 C 位）。单 Windows 桌面应用。
 - 开发分支 `refactor/security`；设计依据 `docs/SPEC.md`，硬约束 `AGENTS.md`，使用说明 `README.md`。
-- 生产实例：本机 `个人\Mozunitor-prod`、M1K `D:\Mozunitor-prod` 均已换 1.3.0 exe；节点互联双向在线。
+- 生产实例：本机 `个人\Mozunitor-prod`、M1K `D:\Mozunitor-prod` 均已换 1.1.5 exe；节点互联双向在线。
 
 ## 进度记录
 
@@ -208,7 +208,7 @@
   快捷方式图标与面板一致。
 - 顺手修 `Handler.server_version` 里写死的 `Mozunitor/1.0.2`：响应头 `Server` 现随
   `SERVER_VERSION`（`tools/update.py` 的版本正则大小写不敏感，仍能从该常量解析）。
-### 2026-11-15 · 1.2.0：前端重做（图标交互 / 详情右栏 / 服务图标）
+### 2026-11-15 · 1.1.5 检查点：前端重做（图标交互 / 详情右栏 / 服务图标）
 
 - 依据用户对 `panel-main` 快照的 7 条批注（`temp/ui-review/annotate/`，快照与批注不入库）：
   页头标识换成应用图标的动态版、点卡片开详情并删行内「详情」按钮、删关闭失效的按钮与两段说明文案、
@@ -226,7 +226,7 @@
 - 验收：核心自测 147 项、HTTP 自测 55 项全 PASS；Playwright（Edge headless）16 项前端断言全 PASS，
   1440×900 / 1280×720 截图无横向溢出，窄屏覆盖层与瞳孔动画实测生效。
 
-### 2026-11-15 · 1.3.0：主题切换（海军蓝 / 暗夜色 / 极简灰）
+### 2026-11-16 · 1.1.5 检查点：主题切换（海军蓝 / 暗夜色 / 极简灰）
 
 - 用户从 5 套候选配色里选了 3 套：海军蓝·五色（第 3 组）、暗夜色·五色（第 1 组），并要求补一套纯灰；
   「极简灰」用无色彩系三支中性色（暗夜色 #4a444b / 珍珠灰 #acacab / 贝色 #ece6e1）中和成纯灰实现。
@@ -240,9 +240,9 @@
 - 验收：核心自测 147 项、HTTP 自测 55 项全 PASS；Playwright 主题 9 项 + 原前端 16 项断言全 PASS，
   1440×900 / 1280×720 无横向溢出。
 
-**1.3.0 发布产物**（2026-11-15）：
-- `Mozunitor-1.3.0-portable.exe` 28,139,565 B，
-  sha256 `4158de1bc2a62e19afa8bc02a85375120af0207cc63ced60c82a2f65f70a91e9`；
-  本机与 M1K 均已换成该版本（本机 19:40 部署，M1K 19:41 部署，两端节点互认在线）。
+**1.1.5 发布产物**（2026-11-16）：
+- `Mozunitor-1.1.5-portable.exe` 28,139,423 B，
+  sha256 `55e32f5a2747d10b78d97d56ed3b59378ad7bc4266d65f34f600288a50c1d99f`；
+  本机与 M1K 均已换成该版本，两端节点互认在线。
 - 旧 exe 备份在 `temp/deploy-backup/`（1.1.4 本机与 M1K 各一份，已 gitignore）。
-- Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.3.0（仅 exe）。
+- Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.1.5（仅 exe）。

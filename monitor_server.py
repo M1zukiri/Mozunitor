@@ -201,7 +201,7 @@ SECURITY = SecurityState(
     login_max_failures=int(_SECURITY_CFG.get("login_max_failures", 5)),
     lockout_s=int(_SECURITY_CFG.get("lockout_s", 300)),
 )
-SERVER_VERSION = "Mozunitor/1.3.0"
+SERVER_VERSION = "Mozunitor/1.1.5"
 
 
 # 远端 Ollama 的模型状态：直接走 HTTP，不经 SSH。expires_at 是绝对时间戳、倒计时由前端算，
