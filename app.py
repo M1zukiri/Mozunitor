@@ -29,6 +29,8 @@ from pathlib import Path
 import pystray
 import webview
 
+from mozunitor import branding
+
 FROZEN = getattr(sys, "frozen", False)
 ROOT = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent
 STATE_DIR = ROOT / ".state"
@@ -177,20 +179,13 @@ def wait_panel(port: int, timeout: float) -> bool:
 # ---------------------------------------------------------------- 窗口与托盘
 
 def make_icon_image(size: int = 64):
-    from PIL import Image, ImageDraw
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle([2, 2, size - 3, size - 3], radius=13, fill=(18, 21, 27, 255))
-    d.rounded_rectangle([15, 15, size - 16, size - 16], radius=7, fill=(64, 200, 172, 255))
-    return img
+    return branding.render(size)
 
 
 def ensure_icon_file() -> str | None:
-    """窗口图标：首次运行时生成到 .state 下，不把二进制塞进仓库。"""
+    """窗口图标：每次启动按当前母版重写 .state 下的 ICO，不把二进制塞进仓库。"""
     try:
-        if not ICON_FILE.is_file():
-            STATE_DIR.mkdir(parents=True, exist_ok=True)
-            make_icon_image(256).save(ICON_FILE, sizes=[(16, 16), (32, 32), (48, 48), (256, 256)])
+        branding.write_ico(ICON_FILE)
         return str(ICON_FILE)
     except Exception as exc:                # noqa: BLE001 —— 没图标也要能开窗
         log(f"图标生成失败：{type(exc).__name__}: {exc}")

@@ -197,3 +197,14 @@
 - 计划任务 `Mozunitor-Backup` 指向已删除的存档脚本，已删除该任务。
 - 重写 `AGENTS.md` 为 1.1.4 事实（架构 / 安全 / ops / 进程 / 保活中继 / 构建发布 / 测试 / 平台坑）；
   README、SPEC、MIGRATION、`services.example.json` 同步到桌面端现状。
+### 2026-11-15 · 应用图标与品牌标识
+
+- 图标母版定为 `mozunitor/branding.py` 的 16×16 像素图：壳体底色 + 面板浅青四角取景框
+  + 居中琥珀状态点（`#0b0e0f` / `#a9d5cf` / `#d9a441`），只按整数倍最近邻放大。
+- 窗口/托盘 ICO 改为每次启动按母版重写 `.state/mozunitor.ico`（多尺寸 16/32/48/64/128/256，
+  每帧独立渲染成 PNG 再拼 ICO，避免 Pillow 缩放糊掉像素图）；`static/icon.svg` 由
+  `tools/make_icon.py` 从同一母版生成，`index.html` 用它作 favicon。
+- exe 构建加 `--icon temp\mozunitor.ico`（先跑 `tools/make_icon.py --ico`），资源管理器与
+  快捷方式图标与面板一致。
+- 顺手修 `Handler.server_version` 里写死的 `Mozunitor/1.0.2`：响应头 `Server` 现随
+  `SERVER_VERSION`（`tools/update.py` 的版本正则大小写不敏感，仍能从该常量解析）。

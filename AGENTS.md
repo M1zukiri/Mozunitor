@@ -59,7 +59,8 @@ Windows 桌面监控面板：托盘应用 + 本机 HTTP 服务 + 无构建前端
 
 ## 构建与发布
 
-- exe：`python -m PyInstaller --noconfirm --clean --onefile --windowed --name Mozunitor --add-data "<绝对路径>\static;static" --add-data "<绝对路径>\tools;tools" --add-data "<绝对路径>\services.example.json;." --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module pygame --exclude-module tkinter --exclude-module matplotlib --exclude-module numpy --exclude-module pandas --exclude-module scipy app.py`。
+- exe：`python tools\make_icon.py --ico temp\mozunitor.ico` 后用 `python -m PyInstaller --noconfirm --clean --onefile --windowed --name Mozunitor --icon "<绝对路径>\temp\mozunitor.ico" --add-data "<绝对路径>\static;static" --add-data "<绝对路径>\tools;tools" --add-data "<绝对路径>\services.example.json;." --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module pygame --exclude-module tkinter --exclude-module matplotlib --exclude-module numpy --exclude-module pandas --exclude-module scipy app.py`。
+- 图标母版只有 `mozunitor/branding.py` 的 16×16 `PATTERN`：窗口/托盘 ICO 由它运行时生成到 `.state/`（每次启动重写），favicon `static/icon.svg` 由 `tools/make_icon.py` 同源生成，改图标只改母版再重跑工具。`static/icon.svg` 不要手改。
 - `--add-data` 必须用绝对路径：配 `--specpath` 改了 cwd 后相对路径会找不到。排除大模块后体积从 70 MB 降到 28 MB 左右。
 - 发布：打 tag `vX.Y.Z` 并建 GitHub Release，资产只含 exe。当前网络下 `github.com:443` 不通，推送用 `ssh://git@ssh.github.com:443/M1zukiri/Mozunitor.git`（密钥 `~/.ssh/id_ed25519_github`）。
 - 版本号同步点：`monitor_server.py` 的 `SERVER_VERSION`、`mozunitor/__init__.py` 的 `__version__`、两个 selftest 的横幅。
