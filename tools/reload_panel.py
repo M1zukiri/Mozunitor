@@ -8,11 +8,9 @@
 #
 # 流程：py_compile 校验 -> 干净退出 -> 等端口释放 -> 按启动器拉起 -> 轮询到 API 就绪。
 #
-# **旧版拉的是 `monitor_server.py`（裸后端）**，而 v3.0.0 起人面对的入口是托盘应用 `app.py`：
-# 用它会把托盘换成「没有图标的孤儿后端」，现象是「重启之后托盘没了」。所以本端走启动器
-# `start-monitor-hidden.vbs`（内部经 WMI，落交互会话），对端走它自己配置里的 `start_cmd`
-# —— M1K 上那是计划任务 `/run /tn Mozunitor`：**只有计划任务能落进交互会话**，从 SSH 直接
-# 起会进 Session 0，没有托盘（见 AGENTS.md「应用形态」）。
+# 本端拉起：安装目录有 `Mozunitor.exe` 就直接起它（便携版）；源码安装退回 `python app.py`，
+# 也可用 `--start` 显式给一条命令。对端走它自己配置里的 `start_cmd`——M1K 上那是计划任务
+# `/run /tn Mozunitor`：**只有计划任务能落进交互会话**，从 SSH 直接起会进 Session 0，没有托盘。
 #
 # 本端退出走 IPC `quit`（面板自己的干净路径）；对端只能 SSH 杀掉监听 8090 的进程。
 # 两条路径都以**端口**为判据，不以「已下发」为判据。
@@ -29,8 +27,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER = os.path.join(ROOT, "monitor_server.py")
 CFG = os.path.join(ROOT, "services.json")
 IPC = os.path.join(ROOT, ".state", "app-ipc.json")
-VBS = os.path.join(ROOT, "start-monitor-hidden.vbs")
-DEFAULT_START = f'wscript.exe "{VBS}"'
+EXE = os.path.join(ROOT, "Mozunitor.exe")
+APP = os.path.join(ROOT, "app.py")
+DEFAULT_START = (f'"{EXE}"' if os.path.exists(EXE)
+                 else f'"{sys.executable}" "{APP}"')
 
 # 对端这条命令在 M1K 的 cmd.exe 里执行，所以只用单引号、纯 ASCII。
 REMOTE_KILL = ("powershell -NoProfile -Command "
@@ -78,9 +78,8 @@ def wait_free(port: int, seconds: float) -> bool:
 def panel_procs() -> list[int]:
     """本端还活着的面板进程（python/pythonw + app.py）。
 
-    **端口释放不等于进程消失**，而启动器 `start-monitor-hidden.vbs` 的守卫看的正是进程：
-    「已有 pythonw app.py 就 WScript.Quit」。只等端口就拉起，会撞上那道守卫 —— 它静默退出，
-    什么都不做也不报错，现象是「重启之后面板没了」。这条是 2026-10-12 真踩到的。
+    **端口释放不等于进程消失**：只等端口就拉起，会撞上单实例守卫，它静默退出、什么都不做，
+    现象是「重启之后面板没了」。所以拉起前要确认旧进程真的没了。这条是 2026-10-12 真踩到的。
     """
     ps = ("Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
           "Where-Object { $_.CommandLine -like '*app.py*' } | "
@@ -269,8 +268,8 @@ def main() -> int:
 
     print("=== 重启本端面板 ===")
     cmd = start_cmd or DEFAULT_START
-    if not start_cmd and not os.path.exists(VBS):
-        print(f"!! 找不到 {VBS}，也不知道本端怎么拉起 —— 用 --start 显式给一条命令")
+    if not start_cmd and not (os.path.exists(EXE) or os.path.exists(APP)):
+        print("!! 既没有 Mozunitor.exe 也没有 app.py，不知道本端怎么拉起 —— 用 --start 显式给一条命令")
         return 1
     if dry:
         print(f"本端拉起方式：{cmd}")

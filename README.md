@@ -1,7 +1,5 @@
 # Mozunitor
 
-![Mozunitor 面板](docs/screenshot.png)
-
 一个本地优先的 Windows 常驻服务监控面板：托盘常驻，浏览器/内嵌窗口查看本机与对端节点的服务状态，
 卡片式操作，支持分级告警、服务参数调整与 SSH 中继。
 

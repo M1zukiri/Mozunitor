@@ -46,9 +46,6 @@ DEFAULT_REMOTE = "https://github.com/M1zukiri/Mozunitor.git"  # 公开仓库即�
 # 端本地：永不被更新覆盖。每条都要写清「为什么不能盖」。
 PROTECTED = {
     "services.json": "端本地配置：一端 where: remote + 隧道，一端必须翻译成 where: local + 回环",
-    "start-monitor-hidden.vbs": "启动器内含本机路径，且必须是 GBK 编码",
-    "start-tray.cmd": "启动器内含本机 python 位置",
-    "start-monitor.bat": "启动器内含本机路径",
 }
 PROTECTED_PREFIXES = (".state/", "logs/", "__pycache__/", ".update/")
 # 树里有、但任何一份运行中的安装都不需要的：明确跳过，并在 --status 里列出来
