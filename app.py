@@ -345,7 +345,7 @@ def quit_app(*_args) -> None:
 
 
 def on_closing():
-    """点标题栏的 X 等价于「关闭窗口」：收进托盘，后端继续服务 mesh 与手机。"""
+    """点标题栏的 X 等价于「关闭窗口」：收进托盘，后端继续服务 mesh 与对端。"""
     if QUITTING:
         return True                         # 放行关闭
     hide_window()

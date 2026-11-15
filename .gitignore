@@ -9,18 +9,6 @@ logs/
 # 本机真实配置不入库；首次启动会从 services.example.json 复制一份
 services.json
 
-# Flutter / Android 构建产物
-mobile/.dart_tool/
-mobile/.flutter-plugins-dependencies
-mobile/build/
-mobile/android/.gradle/
-mobile/android/local.properties
-mobile/android/app/src/main/java/
-mobile/android/gradlew
-mobile/android/gradlew.bat
-mobile/android/gradle/wrapper/gradle-wrapper.jar
-mobile/*.iml
-
 # Python 打包中间产物
 build/
 dist/

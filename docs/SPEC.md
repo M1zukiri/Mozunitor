@@ -51,8 +51,8 @@
 - 默认 `127.0.0.1:8090`（HTTP，不出机器）。
 - 网络入口显式开启，两种模式：`lan`（绑定具体网卡，默认当前 LAN IP）与 `tailnet`（只绑 `100.64.0.0/10`）；均为 HTTPS，来源按 `allowed_cidrs` 白名单。
 - 不使用 `0.0.0.0` 作为网络模式实现；Windows 网络类别为 Public 时拒绝开启。
-- 自签证书：ECDSA P-256、SAN 覆盖主机名与绑定 IP，397 天；指纹 SHA256 在安全页展示，手机钉住。
-- 证书/私钥在 `.state/tls/`；改绑定或轮换时重新生成，需重新配对设备。
+- 自签证书：ECDSA P-256、SAN 覆盖主机名与绑定 IP，397 天；指纹 SHA256 在安全页展示，客户端接入时钉住。
+- 证书/私钥在 `.state/tls/`；改绑定或轮换时重新生成，需重新配对设备/节点。
 
 ## 6. API v2 路由（摘要）
 
@@ -114,9 +114,7 @@
 - `python tools/security_selftest.py`：139 项全 PASS（口令/会话/路由/CSRF/限流/审计/身份/配对/TLS/网络）。
 - `python tools/security_http_selftest.py`：50 项全 PASS（隔离实例 + 真实 HTTPS listener；含双实例节点配对、mesh 拉取、未配对 401、吊销）。
 - 浏览器冒烟：setup → 面板 → 刷新保持登录；设置页安全分节（网络/证书指纹/会话/设备/节点配对）无 JS 异常。
-- Android 真机：配对码 → 设备 token → 面板数据读取；证书指纹钉住；吊销后立即 401。
 - 便携 exe：PyInstaller onefile 构建并在隔离目录启动（生成 services.json/.state/logs，回环 8090 正常）。
-- APK：`flutter analyze` 无问题；debug APK 真机验证通过。release APK 构建需要纯 ASCII 工作路径（见 `NOTES.md`）。
 - forwards：改为短 TTL ticket。`POST /api/forward/ticket`（read + CSRF）签发 60 秒、限次、
   绑定服务与来源 CIDR 的 ticket；转发代理在首个请求核销并下发 HttpOnly Cookie 供子资源复用，
   无 ticket 一律 401；代理只绑网络入口 IP，不用 `0.0.0.0`。unit 147 项、HTTP 55 项全 PASS。

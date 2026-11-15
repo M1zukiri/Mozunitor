@@ -54,7 +54,6 @@ PROTECTED_PREFIXES = (".state/", "logs/", "__pycache__/", ".update/")
 # 树里有、但任何一份运行中的安装都不需要的：明确跳过，并在 --status 里列出来
 SKIP_PREFIXES = {
     "deploy/": "各端的部署产物，按节点分目录，不属于任何一份安装",
-    "mobile/": "手机端 App 源码，两端的安装都不需要",
 }
 
 TAG_RE = re.compile(r"^v(\d+(?:\.\d+)*)$")
