@@ -77,7 +77,7 @@ class SecurityStateTests(unittest.TestCase):
             check("管线：Host 伪造拒绝", r.status == 403, str(r.status))
             r = st.authorize(method="POST", path="/api/setup/complete",
                              headers=_hdr(), client_ip="10.0.0.1", loopback=False)
-            check("管线：本地专属接口拒绝远端", r.status == 403, str(r.status))
+            check("管线：网络入口未开时拒绝远端", r.status == 403, str(r.status))
 
     def test_setup_login_csrf(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -239,7 +239,7 @@ class AuthzTests(unittest.TestCase):
             ("POST", "/api/op"): ("write", "any"),
             ("GET", "/api/security"): ("admin", "any"),
             ("POST", "/api/security/network"): ("admin", "local"),
-            ("POST", "/api/setup/complete"): (None, "local"),
+            ("POST", "/api/setup/complete"): (None, "any"),
             ("POST", "/api/session/login"): (None, "any"),
             ("POST", "/api/pair/complete"): (None, "network"),
         }
@@ -445,7 +445,8 @@ class NetworkStateTests(unittest.TestCase):
             check("网络：白名单外 403", r.status == 403, str(r.status))
             r = st.authorize(method="GET", path="/api/setup/status", headers=hdr,
                              client_ip="127.0.0.1", loopback=False)
-            check("网络：本地专属接口在网络入口 403", r.status == 403, str(r.status))
+            check("网络：初始化状态对网络入口可读（无桌面机器只能远端初始化）",
+                  r.status == 200, str(r.status))
             check("网络：Host 允许绑定地址", "127.0.0.1:8443" in st.allowed_hosts(False))
             check("网络：Origin 用 https",
                   "https://127.0.0.1:8443" in st.allowed_origins(False))
@@ -606,7 +607,7 @@ class TicketTests(unittest.TestCase):
 
 
 def main() -> int:
-    print("=== security core selftest (1.1.2 check) ===")
+    print("=== security core selftest (1.1.3 check) ===")
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromModule(sys.modules[__name__])
     result = unittest.TextTestRunner(verbosity=0).run(suite)

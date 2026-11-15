@@ -10,8 +10,8 @@ from dataclasses import dataclass
 SCOPE_RANK = {"read": 1, "write": 2, "admin": 3}
 # 不需要会话、但要限流的公开流程端点（登录 / 初始化 / 配对 / 壳 token 交换）
 PUBLIC_FLOWS = {
-    "/api/setup/status": "local",
-    "/api/setup/complete": "local",
+    "/api/setup/status": "any",
+    "/api/setup/complete": "any",
     "/api/session/login": "any",
     "/api/session/launch": "local",
     "/api/pair/complete": "network",
@@ -45,8 +45,8 @@ ROUTES: tuple[Route, ...] = (
     _r("GET", r"^/$", None, note="面板静态页"),
     _r("GET", r"^/static/", None, note="静态资源"),
     # ---- 初始化/会话
-    _r("GET", r"^/api/setup/status$", None, listener="local", note="是否已完成初始化"),
-    _r("POST", r"^/api/setup/complete$", None, listener="local",
+    _r("GET", r"^/api/setup/status$", None, note="是否已完成初始化"),
+    _r("POST", r"^/api/setup/complete$", None,
        content_type="json", audit=True, note="一次性 setup code + 设管理员口令"),
     _r("POST", r"^/api/session/login$", None, content_type="json", note="口令登录"),
     _r("POST", r"^/api/session/launch$", None, listener="local",

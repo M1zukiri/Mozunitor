@@ -201,7 +201,7 @@ SECURITY = SecurityState(
     login_max_failures=int(_SECURITY_CFG.get("login_max_failures", 5)),
     lockout_s=int(_SECURITY_CFG.get("lockout_s", 300)),
 )
-SERVER_VERSION = "Mozunitor/1.1.2"
+SERVER_VERSION = "Mozunitor/1.1.3"
 
 
 # 远端 Ollama 的模型状态：直接走 HTTP，不经 SSH。expires_at 是绝对时间戳、倒计时由前端算，
@@ -4782,7 +4782,8 @@ class Handler(BaseHTTPRequestHandler):
             session, cookie = SECURITY.complete_setup(
                 str(payload.get("password") or ""),
                 str(payload.get("proof") or self.headers.get("X-Mozunitor-Launch") or ""),
-                client_ip=self._client_ip(), ua=self._ua())
+                client_ip=self._client_ip(), ua=self._ua(),
+                loopback=self._is_loopback())
         except SecurityAuthError as exc:
             self._auth_error(exc)
             return

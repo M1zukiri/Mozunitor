@@ -329,11 +329,18 @@ class SecurityState:
         return session, self.cookie_header(session, secure=not loopback)
 
     def complete_setup(self, password: str, proof: str, *, client_ip: str,
-                       ua: str = "") -> tuple[Session, str]:
+                       ua: str = "", loopback: bool = True) -> tuple[Session, str]:
         if not self.needs_setup:
             raise AuthError(409, "已经完成初始化")
+        # 网络入口也能初始化（无桌面机器没有本机浏览器），setup code 是唯一凭据，
+        # 所以按来源地址限流，避免把 8 位码当成可爆破的口令。
+        key = f"setup:{client_ip}"
+        allowed, wait = self.limiter.allow(key)
+        if not allowed:
+            raise AuthError(429, "初始化尝试过于频繁，请稍后再试", retry_after=wait)
         acceptable = [x for x in (self.launch_token, self.setup_code) if x]
         if not any(hmac.compare_digest(str(proof or ""), x) for x in acceptable):
+            self.limiter.fail(key)
             self.audit.write("setup_failed", ip=client_ip)
             raise AuthError(403, "初始化凭据不正确")
         if not isinstance(password, str) or len(password) < MIN_PASSWORD_LEN:
@@ -341,9 +348,11 @@ class SecurityState:
         self._admin = {"user": ADMIN_USER, "password": hash_password(password)}
         self._setup_done = True
         self._save_state()
-        session, _ = self.sessions.create("admin", listener="local", ua=ua, ip=client_ip)
+        session, _ = self.sessions.create("admin", listener="local" if loopback else "network",
+                                          ua=ua, ip=client_ip)
+        self.limiter.success(key)
         self.audit.write("setup_ok", ip=client_ip)
-        return session, self.cookie_header(session)
+        return session, self.cookie_header(session, secure=not loopback)
 
     def launch(self, token: str, *, client_ip: str, ua: str = "") -> tuple[Session, str]:
         """壳的 launch token 换会话；只允许回环，token 仅存在于本进程内存。"""

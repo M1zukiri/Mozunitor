@@ -90,7 +90,7 @@ class Client:
 
 
 def main() -> int:
-    print("=== security http selftest (1.1.2 check) ===")
+    print("=== security http selftest (1.1.3 check) ===")
     tmp = Path(tempfile.mkdtemp(prefix="mozu-p2-"))
     cfg = tmp / "services.json"
     state = tmp / "state"
@@ -198,8 +198,13 @@ def main() -> int:
         check("网络：明文 HTTP 访问 TLS 端口失败", code == -1, str(code))
 
         net = Client(f"https://127.0.0.1:{PORT_NET}", ssl._create_unverified_context())
-        code, _, _ = net.req("GET", "/api/setup/status")
-        check("网络：本地专属接口 403", code == 403, str(code))
+        code, _, body = net.req("GET", "/api/setup/status")
+        d = json.loads(body)
+        check("网络：初始化状态可读（无桌面机器靠它判断）",
+              code == 200 and d.get("needs_setup") is False, str(code))
+        code, _, _ = net.req("POST", "/api/setup/complete",
+                             body={"password": PASSWORD, "proof": "X"})
+        check("网络：初始化完成后拒绝再次初始化", code == 409, str(code))
         code, hdr, body = net.req("POST", "/api/session/login", body={"password": PASSWORD})
         check("网络：HTTPS 登录 200", code == 200, str(code))
         check("网络：Cookie 带 Secure", "Secure" in (hdr.get("Set-Cookie") or ""))
