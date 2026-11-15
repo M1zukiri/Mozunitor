@@ -315,21 +315,32 @@ async function loadHistory(it) {
   }
 }
 
+/* 侧栏显隐：宽屏由 workspace 的列宽开关控制，窄屏仍走 .open 覆盖层。 */
+function setSideChrome(open) {
+  const side = $('#side');
+  const ws = $('#workspace');
+  if (side) {
+    side.classList.toggle('hidden', !open);
+    side.classList.toggle('open', open);
+  }
+  if (ws) ws.classList.toggle('with-side', open);
+}
+
 export function renderSide() {
   const body = $('#side-body');
   if (!body) return;
   const it = currentItem();
-  const empty = $('#side-empty');
-  if (empty) empty.classList.toggle('hidden', !!it);
   if (!it) {
+    setSideChrome(false);
     $('#side-name').textContent = '服务详情';
-    $('#side-sub').textContent = '从左侧选一个服务';
+    $('#side-sub').textContent = '';
     body.innerHTML = '';
     body.classList.add('hidden');
     PARAMS = null;
     setSelKey('');
     return;
   }
+  setSideChrome(true);
   body.classList.remove('hidden');
   $('#side-name').textContent = it.name;
   $('#side-sub').textContent = it.id + (SEL.node ? ` · ${SEL.node}` : '');
@@ -363,8 +374,6 @@ export function sideOpen(svcId, nodeId) {
   setSelKey('');                      // 强制重建面板
   renderSide();
   markSelected();
-  const side = $('#side');
-  if (side) side.classList.add('open');
   const body = $('#side-body');
   if (body) body.scrollTop = 0;
 }
@@ -375,7 +384,6 @@ export function sideClose() {
   nextPaneSeq();
   renderSide();
   markSelected();
-  $('#side')?.classList.remove('open');
 }
 
 /* 任何针对某个服务的动作都先让侧边栏聚焦到它。 */

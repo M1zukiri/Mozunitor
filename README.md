@@ -11,6 +11,8 @@
   不统计在线、默认折叠。
 - **真操作**：重启 / 终止 / 打开服务入口 / 查看服务自己声明的面板；动作写入
   `logs/actions.jsonl`。
+- **面板交互**：点服务行即在右栏展开详情，收起后列表回到全宽；页头图标按核心/常驻异常变色，
+  双击跳到异常行；每行按服务类型显示像素图标。
 - **分级保活**：掉线服务自动拉起，连续失败退避并暂停，不刷屏。
 - **服务参数**：只对 `services.json` 里声明的 `settings` 白名单参数开放写入（酒馆连接、RAG 温度、
   Ollama 加载默认值等），写前确认、写后审计。
@@ -92,9 +94,11 @@ python monitor_server.py
 
 ```powershell
 python -m pip install pyinstaller
+python tools\make_icon.py --ico temp\mozunitor.ico
 python -m PyInstaller --noconfirm --clean --onefile --windowed --name Mozunitor `
-  --add-data "static;static" --add-data "tools;tools" `
-  --add-data "services.example.json;." app.py
+  --icon "$PWD\temp\mozunitor.ico" `
+  --add-data "$PWD\static;static" --add-data "$PWD\tools;tools" `
+  --add-data "$PWD\services.example.json;." app.py
 ```
 
 完整命令（含体积优化用的 `--exclude-module`）与发布流程见 `AGENTS.md`。

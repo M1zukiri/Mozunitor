@@ -365,9 +365,9 @@ export function renderSettings() {
       <h3 class="sec">卡片显示</h3>
       <div class="cardprefs">${cardPrefFields()}</div>
       <button class="ghost" type="button" data-card-reset-global="1">恢复默认字段</button>
-      <h3 class="sec">移动端</h3>
+      <h3 class="sec">窄屏</h3>
       <label class="pref"><input type="checkbox" data-pref-mobile="1"${mobileHideOptional() ? ' checked' : ''}>
-        手机上隐藏「按需」组</label>
+        窄屏下隐藏「按需」组</label>
       <h3 class="sec">置顶</h3>
       <div class="pref-list">${pinnedRows()}</div>
     </section>

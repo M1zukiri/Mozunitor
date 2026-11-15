@@ -600,7 +600,7 @@ class TicketTests(unittest.TestCase):
 
 
 def main() -> int:
-    print("=== security core selftest (1.1.4 check) ===")
+    print("=== security core selftest (1.2.0 check) ===")
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromModule(sys.modules[__name__])
     result = unittest.TextTestRunner(verbosity=0).run(suite)

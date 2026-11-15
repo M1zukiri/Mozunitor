@@ -12,7 +12,7 @@ import {
 import {
   POLL_MS, NARROW, DATA, OFFLINE, SEL, INFLIGHT,
   setData, setOffline, currentItem,
-  localItems, keepaliveSummary, downNames, peerStale, tierOf, itemBad,
+  localItems, downNames, peerStale, tierOf, itemBad,
   pins, togglePin, unpin, setGlobalCardPref, resetGlobalCardPrefs,
   mobileHideOptional, setMobileHideOptional, TIER_ORDER,
   storeCollapse, resetServiceCardPref, setServiceCardPref,
@@ -59,49 +59,51 @@ function renderStatus(d) {
   if (bar) bar.classList.toggle('offline', OFFLINE);
 }
 
-/* ------------------------------------------------------------------ KPI */
+/* ------------------------------------------------------------------ 品牌标识 */
 
-function renderKpis(d) {
-  const box = $('#kpi-row');
-  if (!box) return;
-  const s = (d && d.summary) || {};
-  const peers = Object.values((d && d.peers) || {});
-  const online = peers.filter((p) => p.online).length;
-  const ka = keepaliveSummary(d);
+/* 页头品牌标识：框内瞳孔按异常状态变色（核心红 / 常驻黄 / 正常绿）。 */
+function renderBrand(d) {
+  const mark = $('#brand-mark');
+  const btn = $('#brand');
+  if (!mark || !btn) return;
   const core = coreIssues(d).length;
   const normal = normalIssues(d).length;
-  const kaIssues = ka.paused.length + ka.invalid.length;
-  const tiles = [
-    {
-      label: '核心异常',
-      value: `${core}<small>项</small>`,
-      foot: core ? '<span class="badge badge--blocked">需处理</span>' : '<span class="badge badge--ok">正常</span>',
-    },
-    {
-      label: '常驻异常',
-      value: `${normal}<small>项</small>`,
-      foot: normal ? '<span class="badge badge--warning">需处理</span>' : '<span class="badge badge--ok">正常</span>',
-    },
-    {
-      label: '对端节点',
-      value: peers.length ? `${online}<small>/${peers.length}</small>` : '—',
-      foot: peers.length
-        ? (peers.some((p) => p.online) ? '在线' : '全部离线')
-          + (online < peers.length ? ' <span class="badge badge--blocked">离线</span>' : '')
-        : '未配置对端',
-    },
-    {
-      label: '保活干预',
-      value: `${kaIssues}<small>项</small>`,
-      foot: `${ka.total} 项受保活 `
-        + (kaIssues ? '<span class="badge badge--blocked">需处理</span>'
-          : '<span class="badge badge--ok">正常</span>'),
-    },
+  mark.dataset.state = core ? 'bad' : normal ? 'warn' : 'ok';
+  btn.classList.toggle('has-issues', core + normal > 0);
+  btn.title = core + normal
+    ? `核心异常 ${core} 项 · 常驻异常 ${normal} 项 · 双击定位`
+    : '所有服务正常';
+}
+
+/* 双击图标：按「核心 → 常驻」的顺序循环定位到异常服务所在行。 */
+function anomalyList(d) {
+  const local = localItems(d);
+  return [
+    ...local.filter((it) => tierOf(it) === 'core' && itemBad(it)),
+    ...local.filter((it) => tierOf(it) === 'normal' && itemBad(it)),
   ];
-  box.innerHTML = tiles.map((t) =>
-    `<section class="kpi"><span class="kpi-label">${esc(t.label)}</span>`
-    + `<span class="kpi-value">${t.value}</span>`
-    + `<span class="kpi-foot">${t.foot}</span></section>`).join('');
+}
+
+let anomalySeq = 0;
+
+function jumpToAnomaly() {
+  const list = anomalyList(DATA);
+  if (!list.length) return;
+  const it = list[anomalySeq % list.length];
+  anomalySeq = (anomalySeq + 1) % list.length;
+  const selfId = (DATA.node && DATA.node.id) || 'self';
+  const machine = [...document.querySelectorAll('#board .machine')]
+    .find((m) => m.dataset.machine === selfId);
+  if (!machine) return;
+  const group = machine.querySelector(`.tier-group[data-tier="${tierOf(it)}"]`);
+  if (!group) return;
+  const body = group.querySelector('.tier-body');
+  if (body && body.hidden) group.querySelector('.tier-head')?.click();
+  const row = group.querySelector(`article.svc[data-sid="${it.id}"], .tile[data-sid="${it.id}"]`);
+  if (!row) return;
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  row.classList.add('jump');
+  setTimeout(() => row.classList.remove('jump'), 1600);
 }
 
 /* ------------------------------------------------------------------ 警告条 */
@@ -183,15 +185,20 @@ function render(d) {
   setData(d);
   setOffline(false);
   renderStatus(d);
-  renderKpis(d);
+  renderBrand(d);
   renderWarnings(d);
   renderPinned(d);
   renderBoard(d);
   const count = $('#board-count');
   if (count) {
-    const n = document.querySelectorAll('#board .svc, #board .tile').length;
-    const machines = document.querySelectorAll('#board .machine').length;
-    count.textContent = `${n} 项 · ${machines} 台`;
+    const peers = Object.values((d && d.peers) || {});
+    const online = peers.filter((p) => p.online).length;
+    const local = localItems(d, true);
+    const up = local.filter((it) => it.status === 'up').length;
+    const bad = local.filter((it) => itemBad(it)).length;
+    count.innerHTML = `设备 <b>${1 + online}/${1 + peers.length}</b>`
+      + ` · 服务 <b>${up}/${local.length}</b>`
+      + ` · 异常 <b${bad ? ' class="hot"' : ''}>${bad}</b>`;
   }
   renderSide();
   // 声明了 refresh:"poll" 的面板随轮询局部刷新 —— 只换它的内层容器，侧边栏滚动位置不丢。
@@ -215,7 +222,8 @@ function setOfflineView() {
   if (!DATA) {
     const board = $('#board');
     if (board) board.innerHTML = '<div class="empty">无法连接 Mozunitor 后端</div>';
-    document.querySelectorAll('#kpi-row .kpi-foot').forEach((el) => { el.textContent = '无数据'; });
+    const count = $('#board-count');
+    if (count) count.textContent = '无数据';
   }
 }
 
@@ -345,6 +353,11 @@ function bindEvents() {
       return;
     }
 
+    const card = e.target.closest('#board .svc, #board .tile, #pinned .svc, #pinned .tile');
+    if (card && !e.target.closest('button, input, select, label, a')) {
+      return sideOpen(card.dataset.sid, card.dataset.snode);
+    }
+
     const sideBtn = e.target.closest('[data-side]');
     if (sideBtn) return sideOpen(sideBtn.dataset.side, sideBtn.dataset.node);
     const saveP = e.target.closest('[data-save-params]');
@@ -471,14 +484,23 @@ function bindEvents() {
   });
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      const card = e.target.closest('#board .svc, #board .tile, #pinned .svc, #pinned .tile');
+      if (card && card === e.target) {
+        e.preventDefault();
+        sideOpen(card.dataset.sid, card.dataset.snode);
+      }
+      return;
+    }
     if (e.key !== 'Escape') return;
     if (confirmOpen()) { settleConfirm(false); return; }
     if (settingsOpen()) { closeSettings(); return; }
-    if ($('#side')?.classList.contains('open')) sideClose();
+    if (SEL) sideClose();
   });
 
   $('#refresh')?.addEventListener('click', poll);
   $('#side-close')?.addEventListener('click', sideClose);
+  $('#brand')?.addEventListener('dblclick', jumpToAnomaly);
 
   const form = $('#gate-form');
   if (form) {

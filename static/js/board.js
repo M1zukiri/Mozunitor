@@ -1,5 +1,6 @@
 // 机器 → 级别（core / normal / optional）→ 服务卡片。置顶区复用同一套卡片渲染。
 import { esc, fmtMB, fmtMs, fmtPct, fmtDur, agoIso } from './format.js';
+import { iconSvg, iconLabel, serviceIcon } from './icons.js';
 import {
   DATA, SEL, INFLIGHT, TIERS, TIER_ORDER, CARD_FIELDS,
   machineBlocks, tierItems, tierOf, tierStats, itemBad, itemByKey,
@@ -87,10 +88,7 @@ function cardActions(it, node) {
     actions.push(`<button class="danger" data-restart="${esc(it.id)}" data-name="${esc(it.name)}"${nAttr}`
       + (busy ? ' disabled' : '')
       + `>${busy ? '等待响应…' : '重启'}</button>`);
-  } else if (!remote) {
-    actions.push(`<button disabled title="${esc(it.restart_why || '')}">不可重启</button>`);
   }
-  actions.push(`<button data-side="${esc(it.id)}"${nAttr}>详情</button>`);
   return actions.join('');
 }
 
@@ -100,6 +98,7 @@ export function renderCard(it, node, opt) {
   const status = it.status === 'up' ? 'up' : it.status === 'down' ? 'down' : 'unknown';
   const tone = status === 'up' ? 'ok' : status === 'down' ? 'blocked' : 'info';
   const stateLabel = status === 'up' ? '正常' : status === 'down' ? '不可达' : '未知';
+
   const selected = SEL && SEL.svc === it.id && (SEL.node || '') === (node || '');
   const st = stateText(it, pref);
   const bits = pref.metrics ? metricBits(it) : '';
@@ -119,13 +118,18 @@ export function renderCard(it, node, opt) {
   const role = (pref.role && it.role)
     ? `<span class="svc-role" title="${esc(it.role)}">${esc(it.role)}</span>` : '';
 
+  const acts = cardActions(it, node);
+  const cat = serviceIcon(it);
   return `<article class="svc ${status}${it.flag ? ' norecovery' : ''}${selected ? ' selected' : ''}`
-    + `${opt.pinned ? ' pinned' : ''}" data-sid="${esc(it.id)}" data-snode="${esc(node || '')}">`
+    + `${opt.pinned ? ' pinned' : ''}" data-sid="${esc(it.id)}" data-snode="${esc(node || '')}"`
+    + ` tabindex="0" role="button" aria-label="查看 ${esc(it.name)} 详情">`
+    + `<span class="svc-ico" title="${esc(iconLabel(cat))}">${iconSvg(cat)}</span>`
     + `<div class="svc-body"><div class="svc-line">${pinButton(node, it.id)}`
     + `<span class="svc-name">${esc(it.name)}</span>`
     + `<span class="badge badge--${tone}">${stateLabel}</span>${ka}${flag}${role}</div>`
     + `${metrics}${deps}${note}${warn}</div>`
-    + `<div class="actions">${cardActions(it, node)}</div></article>`;
+    + (acts ? `<div class="actions">${acts}</div>` : '')
+    + '</article>';
 }
 
 /* 按需层：没在跑是常态，不套卡片那套状态/依赖结构，只留状态点、名称与按钮。 */
@@ -133,6 +137,7 @@ export function renderTile(it, node, opt) {
   opt = opt || {};
   const up = it.status === 'up';
   const busy = INFLIGHT.has(node ? `${node}:${it.id}` : it.id);
+  const cat = serviceIcon(it);
   const acts = [pinButton(node, it.id)];
   if (up && it.access && it.access.url) {
     acts.push(`<button data-open="${esc(it.access.url)}">打开</button>`);
@@ -147,8 +152,9 @@ export function renderTile(it, node, opt) {
     acts.push('<button disabled title="关闭请直接关它的窗口">运行中</button>');
   }
   return `<div class="tile${up ? ' on' : ''}${opt.pinned ? ' pinned' : ''}"`
-    + ` data-sid="${esc(it.id)}" data-snode="${esc(node || '')}">`
-    + `<span class="dot"></span>`
+    + ` data-sid="${esc(it.id)}" data-snode="${esc(node || '')}"`
+    + ` tabindex="0" role="button" aria-label="查看 ${esc(it.name)} 详情">`
+    + `<span class="svc-ico${up ? '' : ' off'}" title="${esc(iconLabel(cat))}">${iconSvg(cat)}</span>`
     + `<span class="tile-name" title="${esc(it.role || '')}">${esc(it.name)}</span>`
     + `<span class="tile-acts">${acts.join('')}</span></div>`;
 }
@@ -197,7 +203,7 @@ function machineMeta(m) {
   const sm = m.summary || {};
   const sumTxt = sm.total != null ? `${sm.up || 0}/${sm.total} 在线` : '';
   const ageS = (!m.self && m.at) ? Math.max(0, Math.round(Date.now() / 1000 - m.at)) : null;
-  if (m.self) return sumTxt;
+  if (m.self) return '';
   if (m.online) {
     return [sumTxt, m.latency_ms != null ? fmtMs(m.latency_ms) + ' 延迟' : '']
       .filter(Boolean).join(' · ')

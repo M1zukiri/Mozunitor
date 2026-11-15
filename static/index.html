@@ -11,7 +11,20 @@
 <body>
 
 <header class="statusbar" id="statusbar">
-  <span class="brand-mark" aria-hidden="true">MZ<span class="caret">_</span></span>
+  <button class="brand" id="brand" type="button" aria-label="Mozunitor 状态" title="双击定位到异常服务">
+    <span class="brand-mark" id="brand-mark" data-state="ok" aria-hidden="true">
+      <svg class="mark-svg" viewBox="0 0 16 16" shape-rendering="crispEdges">
+        <g class="mark-frame">
+          <rect x="1" y="1" width="6" height="2"/><rect x="9" y="1" width="6" height="2"/>
+          <rect x="1" y="3" width="2" height="4"/><rect x="13" y="3" width="2" height="4"/>
+          <rect x="1" y="9" width="2" height="4"/><rect x="13" y="9" width="2" height="4"/>
+          <rect x="1" y="13" width="6" height="2"/><rect x="9" y="13" width="6" height="2"/>
+        </g>
+        <rect class="mark-pupil" x="6" y="6" width="4" height="4"/>
+      </svg>
+      <span class="caret" aria-hidden="true">_</span>
+    </span>
+  </button>
   <span class="status-node" id="status-node">—</span>
   <div class="status-facts">
     <span class="stat" id="stat-core" data-tone="muted">核心异常 —</span>
@@ -30,34 +43,22 @@
   <div class="pinned-body" id="pinned-body"></div>
 </section>
 
-<main class="workspace workspace--dash">
-  <div class="kpi-row" id="kpi-row">
-    <section class="kpi"><span class="kpi-label">核心异常</span><span class="kpi-value">—</span><span class="kpi-foot">载入中</span></section>
-    <section class="kpi"><span class="kpi-label">常驻异常</span><span class="kpi-value">—</span><span class="kpi-foot">载入中</span></section>
-    <section class="kpi"><span class="kpi-label">对端节点</span><span class="kpi-value">—</span><span class="kpi-foot">载入中</span></section>
-    <section class="kpi"><span class="kpi-label">保活干预</span><span class="kpi-value">—</span><span class="kpi-foot">载入中</span></section>
-  </div>
-
+<main class="workspace workspace--dash" id="workspace">
   <section class="panel panel-board">
-    <h2 class="panel-title">服务矩阵 <span class="count" id="board-count">—</span></h2>
+    <h2 class="panel-title">
+      <span class="panel-heading">服务总览</span>
+      <span class="count" id="board-count">—</span>
+    </h2>
     <div class="board" id="board"><div class="empty">载入中…</div></div>
   </section>
 
-  <aside class="panel side" id="side">
+  <aside class="panel side hidden" id="side">
     <div class="side-head panel-title">
       <h2 id="side-name">服务详情</h2>
-      <span id="side-sub" class="side-sub">从左侧选一个服务</span>
-      <button id="side-close" class="btn side-close" type="button">关闭</button>
+      <span id="side-sub" class="side-sub"></span>
+      <button id="side-close" class="btn side-close" type="button" aria-label="收起详情" title="收起详情（Esc）">›</button>
     </div>
     <div id="side-body" class="detail hidden"></div>
-    <div id="side-empty" class="side-empty">
-      <p>从左侧服务矩阵选一项，查看指标、操作、参数与动作历史。</p>
-      <dl class="tier-legend">
-        <div><dt>核心</dt><dd>基础设施与远程通道：异常红色横幅并自动展开</dd></div>
-        <div><dt>常驻</dt><dd>长期运行的服务：异常只给组头计数</dd></div>
-        <div><dt>按需</dt><dd>按需拉起：不统计在线，默认折叠</dd></div>
-      </dl>
-    </div>
   </aside>
 </main>
 

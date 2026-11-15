@@ -201,7 +201,7 @@ SECURITY = SecurityState(
     login_max_failures=int(_SECURITY_CFG.get("login_max_failures", 5)),
     lockout_s=int(_SECURITY_CFG.get("lockout_s", 300)),
 )
-SERVER_VERSION = "Mozunitor/1.1.4"
+SERVER_VERSION = "Mozunitor/1.2.0"
 
 
 # 远端 Ollama 的模型状态：直接走 HTTP，不经 SSH。expires_at 是绝对时间戳、倒计时由前端算，
@@ -1356,6 +1356,8 @@ def build_view() -> dict:
         item = {
             "id": sid, "name": svc["name"], "group": svc["group"], "tier": svc_tier(svc),
             "card": svc.get("card") or {}, "role": svc.get("role", ""),
+            # 可选的服务图标（icons.js 的键）；缺省由前端按 id/名称推断
+            "icon": svc.get("icon"),
             "settings": svc.get("settings") or [],
             "status": pr["status"], "latency_ms": pr["latency_ms"], "detail": pr["detail"],
             "since": since.get(sid), "logs": svc.get("logs", []),
