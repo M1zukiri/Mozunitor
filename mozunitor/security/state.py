@@ -69,7 +69,6 @@ class SecurityState:
     _admin: dict | None = field(default=None, init=False)
     _setup_done: bool = field(default=False, init=False)
     launch_token: str = field(default="", init=False)
-    setup_code: str = field(default="", init=False)
     identity: NodeIdentity = field(init=False)
     local_token: LocalToken = field(init=False)
     sessions: SessionStore = field(init=False)
@@ -101,8 +100,6 @@ class SecurityState:
         self.audit = AuditLog(self.root / "logs" / "security.jsonl")
         self._load_state()
         self.launch_token = os.environ.get("MOZU_LAUNCH_TOKEN") or random_token(32)
-        if self.needs_setup:
-            self.setup_code = os.environ.get("MOZU_SETUP_CODE") or self._new_setup_code()
 
     # ---------------------------------------------------------------- 持久化
     @property
@@ -145,11 +142,6 @@ class SecurityState:
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, self.state_file)
         harden_file(self.state_file)
-
-    @staticmethod
-    def _new_setup_code() -> str:
-        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        return "".join(secrets.choice(alphabet) for _ in range(8))
 
     # ---------------------------------------------------------------- 状态
     @property
@@ -328,21 +320,14 @@ class SecurityState:
         self.audit.write("login_ok", ip=client_ip, ua=ua, sid=session.sid[-8:])
         return session, self.cookie_header(session, secure=not loopback)
 
-    def complete_setup(self, password: str, proof: str, *, client_ip: str,
+    def complete_setup(self, password: str, *, client_ip: str,
                        ua: str = "", loopback: bool = True) -> tuple[Session, str]:
+        """首次初始化：只设管理员口令，不再要求 setup code。
+
+        初始化只允许发生一次（`needs_setup` 之后即拒绝），口令强度只做长度下限。
+        """
         if not self.needs_setup:
             raise AuthError(409, "已经完成初始化")
-        # 网络入口也能初始化（无桌面机器没有本机浏览器），setup code 是唯一凭据，
-        # 所以按来源地址限流，避免把 8 位码当成可爆破的口令。
-        key = f"setup:{client_ip}"
-        allowed, wait = self.limiter.allow(key)
-        if not allowed:
-            raise AuthError(429, "初始化尝试过于频繁，请稍后再试", retry_after=wait)
-        acceptable = [x for x in (self.launch_token, self.setup_code) if x]
-        if not any(hmac.compare_digest(str(proof or ""), x) for x in acceptable):
-            self.limiter.fail(key)
-            self.audit.write("setup_failed", ip=client_ip)
-            raise AuthError(403, "初始化凭据不正确")
         if not isinstance(password, str) or len(password) < MIN_PASSWORD_LEN:
             raise AuthError(400, f"口令至少 {MIN_PASSWORD_LEN} 位")
         self._admin = {"user": ADMIN_USER, "password": hash_password(password)}
@@ -350,7 +335,6 @@ class SecurityState:
         self._save_state()
         session, _ = self.sessions.create("admin", listener="local" if loopback else "network",
                                           ua=ua, ip=client_ip)
-        self.limiter.success(key)
         self.audit.write("setup_ok", ip=client_ip)
         return session, self.cookie_header(session, secure=not loopback)
 

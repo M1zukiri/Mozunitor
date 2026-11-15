@@ -201,7 +201,7 @@ SECURITY = SecurityState(
     login_max_failures=int(_SECURITY_CFG.get("login_max_failures", 5)),
     lockout_s=int(_SECURITY_CFG.get("lockout_s", 300)),
 )
-SERVER_VERSION = "Mozunitor/1.1.3"
+SERVER_VERSION = "Mozunitor/1.1.4"
 
 
 # 远端 Ollama 的模型状态：直接走 HTTP，不经 SSH。expires_at 是绝对时间戳、倒计时由前端算，
@@ -4612,8 +4612,8 @@ def print_access_hints(host: str, port: int) -> None:
     print(f"Mozunitor 已启动: http://127.0.0.1:{port}/")
     print("1.1.0 起回环也需要登录（不再有回环免鉴权）：")
     if SECURITY.needs_setup:
-        print(f"  首次初始化 setup code: {SECURITY.setup_code}")
-        print("  壳内通过 launch token 自动登录；也可用上面的 setup code 完成初始化")
+        print("  首次初始化：打开面板设置管理员口令（至少 8 位）")
+        print("  壳内通过 launch token 自动登录；浏览器直接访问面板即可设置")
     else:
         print("  用管理员口令登录；本机脚本可用 .state/local-token")
     if NETWORK_CFG.enabled and NET_SERVER is not None:
@@ -4781,7 +4781,6 @@ class Handler(BaseHTTPRequestHandler):
         try:
             session, cookie = SECURITY.complete_setup(
                 str(payload.get("password") or ""),
-                str(payload.get("proof") or self.headers.get("X-Mozunitor-Launch") or ""),
                 client_ip=self._client_ip(), ua=self._ua(),
                 loopback=self._is_loopback())
         except SecurityAuthError as exc:
@@ -5391,8 +5390,9 @@ def main() -> int:
     port = LOCAL_PORT
 
     if SECURITY.needs_setup:
-        print(f"[初始化] 首次运行，setup code: {SECURITY.setup_code}")
-        print("[初始化] 壳内 launch token 可自动登录；外部浏览器需用 setup code 完成初始化")
+        print("[初始化] 首次运行：打开面板设置管理员口令（至少 8 位）")
+        if NETWORK_CFG.enabled:
+            print("[初始化] 注意：网络入口已开启且尚未初始化，白名单来源都能完成这次初始化")
 
     with STATE.lock:
         STATE.restart_log.extend(load_history())

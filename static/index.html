@@ -77,15 +77,15 @@
     </div>
     <div class="modal-body">
       <p id="gate-desc">回环访问同样需要登录。输入管理员口令；首次运行先完成初始化。</p>
-      <label class="field" id="gate-user-field">
-        <span class="field-label">setup code</span>
-        <input id="gate-user" type="text" autocomplete="one-time-code"
-               autocapitalize="off" spellcheck="false" placeholder="setup code">
-      </label>
       <label class="field">
         <span class="field-label">口令</span>
         <input id="gate-pass" type="password" autocomplete="current-password"
                autocapitalize="off" spellcheck="false" placeholder="管理员口令">
+      </label>
+      <label class="field hidden" id="gate-pass2-field">
+        <span class="field-label">确认口令</span>
+        <input id="gate-pass2" type="password" autocomplete="new-password"
+               autocapitalize="off" spellcheck="false" placeholder="再次输入口令">
       </label>
       <p id="gate-err" class="gate-err" role="alert"></p>
       <p class="hint" id="gate-hint">口令只以 scrypt 派生值落盘；初始化后本窗口自动登录。</p>

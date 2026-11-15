@@ -38,7 +38,7 @@
 
 ## 4. 身份与凭据
 
-- 管理员口令：`hashlib.scrypt`（n=2^14、r=8、p=1、16 B salt），`compare_digest` 校验；首次启动生成一次性 setup code（仅内存）。
+- 管理员口令：`hashlib.scrypt`（n=2^14、r=8、p=1、16 B salt），`compare_digest` 校验；首次启动只需设置口令（≥8 位），不引入一次性初始化码。
 - 会话：服务端 `SessionStore`，Cookie 为 HMAC 签名；`HttpOnly + SameSite=Strict + Secure(HTTPS) + Path=/`；30 分钟滑动、最长 30 天；可吊销。管理员口令登录签发 admin 会话。
 - launch token：壳启动时生成（仅内存），经 URL fragment 交给 WebView；不落盘、不进查询串。
 - 本地 token：`.state/local-token`（ACL 收紧），经 `X-Mozunitor-Local-Token` 使用。
@@ -60,7 +60,7 @@
 | --- | --- | --- | --- |
 | `GET /`、`/static/*` | 无 | any | 静态资源 |
 | `GET /api/setup/status` | 无 | local | needs_setup / 节点名 / 版本 |
-| `POST /api/setup/complete` | 无 | local | setup code + 设管理员口令 |
+| `POST /api/setup/complete` | 无 | any | 设管理员口令（仅未初始化时；网络入口按白名单来源限流） |
 | `POST /api/session/login` | 无 | any | 口令 → 会话（限流） |
 | `POST /api/session/launch` | 无 | local | launch token → 会话 |
 | `GET/POST /api/session*` | read | any | 会话信息 / 注销 |

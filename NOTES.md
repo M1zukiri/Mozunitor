@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-11-13）
 
-- 版本 **1.1.3**（B 位：安全重构 + ops 工具链 + 生产切换修复 + 无桌面远端初始化）。开发基线为公开 1.0.0。开发分支 `refactor/security`，按
+- 版本 **1.1.4**（B 位：安全重构 + ops 工具链 + 生产切换修复；初始化只要管理员口令）。开发基线为公开 1.0.0。开发分支 `refactor/security`，按
   `docs/SPEC-security-hardening.md` 执行；B 位目标 **1.1.0**。
 
 ## 进度记录
@@ -187,3 +187,12 @@
   sha256 `9d197cf95b45c07fab49ad359f1b1db3dfcf04743d2d4ad01296857d8e3e7504`；
   本机与 M1K 生产实例均已换成该版本。
 - Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.1.3（仅 exe，APK 待手机恢复）。
+### 2026-11-15 · 1.1.4：初始化只设管理员口令（移除 setup code）
+
+- 用户决定去掉一次性 setup code：初始化只凭管理员口令（≥8 位，两次输入一致），本机壳内
+  与网络入口都能完成；仅 `needs_setup` 时可用，完成后一律 409。
+- 影响与取舍：网络入口在白名单来源内、未初始化时任何客户端都能抢先完成初始化
+  （启动日志会打印这条提示）。这是为「单应用 + 一个口令」付出的代价，已按用户选择执行。
+- 同步：前端门禁只显示「口令 / 确认口令」，后端去掉 `setup_code` 与 `MOZU_SETUP_CODE`，
+  SPEC / MIGRATION / README 相应改写；core 与 http 自测全 PASS。
+- 1.1.3 发布资产仍带 setup code 流程，1.1.4 起以口令为准。

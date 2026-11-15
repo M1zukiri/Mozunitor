@@ -240,27 +240,24 @@ async function poll() {
 /* ------------------------------------------------------------------ 登录 / 初始化 */
 
 let NEEDS_SETUP = false;
-let LAUNCH_PROOF = '';       // 壳内 launch token：初始化时可当一次性凭据
 
 function gateError(msg) {
   const el = $('#gate-err');
   if (el) el.textContent = msg || '';
 }
 
-function showSetupGate(launch) {
+function showSetupGate() {
   NEEDS_SETUP = true;
-  LAUNCH_PROOF = launch || '';
   setSetup(true);
   $('#gate-title').textContent = '首次初始化';
-  $('#gate-desc').textContent = '设置管理员口令（至少 8 位）。'
-    + (LAUNCH_PROOF ? '' : ' setup code 见前台启动日志或壳日志。');
-  $('#gate-user-field').classList.toggle('hidden', !!LAUNCH_PROOF);
-  $('#gate-user').placeholder = 'setup code';
-  $('#gate-user').value = '';
+  $('#gate-desc').textContent = '设置管理员口令（至少 8 位）。';
+  $('#gate-pass').value = '';
   $('#gate-pass').placeholder = '管理员口令（至少 8 位）';
+  $('#gate-pass2').value = '';
+  $('#gate-pass2-field').classList.remove('hidden');
   $('#gate-go').textContent = '初始化';
   $('#gate-later').classList.add('hidden');
-  $('#gate-hint').textContent = '口令不会明文落盘；初始化后本窗口自动登录。';
+  $('#gate-hint').textContent = '口令只以 scrypt 派生值落盘；初始化后自动登录。';
   showGate();
 }
 
@@ -269,7 +266,8 @@ function showLoginGate(msg) {
   setSetup(false);
   $('#gate-title').textContent = '需要登录';
   $('#gate-desc').textContent = '输入管理员口令。1.1.0 起回环访问同样需要登录。';
-  $('#gate-user-field').classList.add('hidden');
+  $('#gate-pass2-field').classList.add('hidden');
+  $('#gate-pass2').value = '';
   $('#gate-pass').placeholder = '管理员口令';
   $('#gate-go').textContent = '登录';
   $('#gate-later').classList.add('hidden');
@@ -280,11 +278,11 @@ function showLoginGate(msg) {
 
 async function submitGate() {
   const pass = $('#gate-pass').value || '';
-  const proof = LAUNCH_PROOF || ($('#gate-user').value || '').trim();
   gateError('');
   if (NEEDS_SETUP) {
     if (!pass) return gateError('请设置管理员口令');
-    const r = await completeSetup(pass, proof);
+    if (pass !== ($('#gate-pass2').value || '')) return gateError('两次输入的口令不一致');
+    const r = await completeSetup(pass);
     if (!r.ok) return gateError(r.error);
     NEEDS_SETUP = false;
     setSetup(false);

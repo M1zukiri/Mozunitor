@@ -88,11 +88,11 @@ export async function login(password) {
   return { ok: true, session: SESSION };
 }
 
-export async function completeSetup(password, proof) {
+export async function completeSetup(password) {
   const r = await apiFetch('/api/setup/complete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password, proof }),
+    body: JSON.stringify({ password }),
   });
   const d = await readJSON(r);
   if (!r.ok || !d.ok) return { ok: false, error: d.error || '初始化失败', status: r.status };

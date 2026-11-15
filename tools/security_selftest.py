@@ -43,7 +43,6 @@ class SecurityStateTests(unittest.TestCase):
         st = security_state.SecurityState(Path(tmp), port=8097,
                                           net_host="127.0.0.1", lockout_s=30)
         st.launch_token = "LAUNCH-TEST"
-        st.setup_code = "SETUP-TEST"
         return st
 
     def test_no_implicit_loopback(self):
@@ -84,13 +83,12 @@ class SecurityStateTests(unittest.TestCase):
             st = self._state(tmp)
             check("初始化：初始 needs_setup", st.needs_setup)
             try:
-                st.complete_setup("password123", "WRONG", client_ip="127.0.0.1")
-                check("初始化：错误 setup code 拒绝", False)
+                st.complete_setup("short", client_ip="127.0.0.1")
+                check("初始化：弱口令拒绝", False)
             except security_state.AuthError as exc:
-                check("初始化：错误 setup code 拒绝", exc.status == 403)
-            sess, cookie = st.complete_setup("password123", st.setup_code,
-                                             client_ip="127.0.0.1")
-            check("初始化：正确 setup code 成功", not st.needs_setup)
+                check("初始化：弱口令拒绝", exc.status == 400)
+            sess, cookie = st.complete_setup("password123", client_ip="127.0.0.1")
+            check("初始化：设置口令成功", not st.needs_setup)
             cookie_pair = cookie.split(";")[0]
             ck = cookie_pair.split("=", 1)
             h = _hdr(Cookie=f"{ck[0]}={ck[1]}")
@@ -127,7 +125,7 @@ class SecurityStateTests(unittest.TestCase):
     def test_login_rate_limit(self):
         with tempfile.TemporaryDirectory() as tmp:
             st = self._state(tmp)
-            st.complete_setup("password123", st.setup_code, client_ip="127.0.0.1")
+            st.complete_setup("password123", client_ip="127.0.0.1")
             for _ in range(5):
                 try:
                     st.login("wrong", client_ip="10.0.0.9")
@@ -144,7 +142,7 @@ class SecurityStateTests(unittest.TestCase):
     def test_change_password_revokes(self):
         with tempfile.TemporaryDirectory() as tmp:
             st = self._state(tmp)
-            sess, cookie = st.complete_setup("password123", st.setup_code,
+            sess, cookie = st.complete_setup("password123",
                                              client_ip="127.0.0.1")
             pair = cookie.split(";")[0]
             st.change_password("password123", "newpassword123", client_ip="127.0.0.1")
@@ -427,7 +425,6 @@ class NetworkStateTests(unittest.TestCase):
         st = security_state.SecurityState(
             Path(tmp), port=8097, net_port=8443, network=network, lockout_s=30)
         st.launch_token = "LAUNCH-TEST"
-        st.setup_code = "SETUP-TEST"
         return st
 
     def test_network_source_guards(self):
@@ -494,8 +491,7 @@ class PairingTests(unittest.TestCase):
     def test_state_pair_flow(self):
         with tempfile.TemporaryDirectory() as tmp:
             st = security_state.SecurityState(Path(tmp), port=8097, lockout_s=30)
-            st.setup_code = "SETUP-TEST"
-            st.complete_setup("password123", "SETUP-TEST", client_ip="127.0.0.1")
+            st.complete_setup("password123", client_ip="127.0.0.1")
             issued = st.start_pairing(client_ip="127.0.0.1")
             check("配对：生成配对码", bool(issued.get("code")))
             try:
@@ -523,8 +519,7 @@ class PairingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             st = security_state.SecurityState(Path(tmp), port=8097, lockout_s=30,
                                               login_max_failures=2, login_window_s=60)
-            st.setup_code = "SETUP-TEST"
-            st.complete_setup("password123", "SETUP-TEST", client_ip="127.0.0.1")
+            st.complete_setup("password123", client_ip="127.0.0.1")
             for _ in range(2):
                 try:
                     st.complete_pairing("WRONG", "手机", client_ip="10.0.0.5")
@@ -555,8 +550,7 @@ class NodeTests(unittest.TestCase):
     def test_state_node_pairing(self):
         with tempfile.TemporaryDirectory() as tmp:
             st = security_state.SecurityState(Path(tmp), port=8097, lockout_s=30)
-            st.setup_code = "SETUP-TEST"
-            st.complete_setup("password123", "SETUP-TEST", client_ip="127.0.0.1")
+            st.complete_setup("password123", client_ip="127.0.0.1")
             issued = st.start_node_pairing(client_ip="127.0.0.1")
             check("节点：生成配对码", len(issued["code"]) == pairing.PAIR_CODE_LEN)
             record, outgoing = st.complete_node_pairing(
@@ -597,8 +591,7 @@ class TicketTests(unittest.TestCase):
     def test_state_forward_ticket(self):
         with tempfile.TemporaryDirectory() as tmp:
             st = security_state.SecurityState(Path(tmp), port=8097, lockout_s=30)
-            st.setup_code = "SETUP-TEST"
-            st.complete_setup("password123", "SETUP-TEST", client_ip="127.0.0.1")
+            st.complete_setup("password123", client_ip="127.0.0.1")
             issued = st.issue_forward_ticket("panel", 8097, client_ip="127.0.0.1",
                                              allowed_cidrs=["127.0.0.0/8"])
             check("ticket：SecurityState 签发", issued["ticket"].startswith("mozt_"))
@@ -607,7 +600,7 @@ class TicketTests(unittest.TestCase):
 
 
 def main() -> int:
-    print("=== security core selftest (1.1.3 check) ===")
+    print("=== security core selftest (1.1.4 check) ===")
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromModule(sys.modules[__name__])
     result = unittest.TextTestRunner(verbosity=0).run(suite)

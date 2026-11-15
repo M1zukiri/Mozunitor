@@ -27,7 +27,6 @@ ROOT = Path(__file__).resolve().parent.parent
 PORT = 8123
 PORT_NET = 8124
 BASE = f"http://127.0.0.1:{PORT}"
-SETUP_CODE = "TESTSETUP"
 LAUNCH = "TESTLAUNCH"
 PASSWORD = "password123"
 FAILS: list[str] = []
@@ -90,7 +89,7 @@ class Client:
 
 
 def main() -> int:
-    print("=== security http selftest (1.1.3 check) ===")
+    print("=== security http selftest (1.1.4 check) ===")
     tmp = Path(tempfile.mkdtemp(prefix="mozu-p2-"))
     cfg = tmp / "services.json"
     state = tmp / "state"
@@ -99,7 +98,6 @@ def main() -> int:
     env.update({
         "MOZU_CONFIG": str(cfg),
         "MOZU_STATE_DIR": str(state),
-        "MOZU_SETUP_CODE": SETUP_CODE,
         "MOZU_LAUNCH_TOKEN": LAUNCH,
         "MOZU_ACTION_LOG": str(tmp / "actions.jsonl"),
         "MOZU_NET_CATEGORY": "Private",
@@ -134,12 +132,12 @@ def main() -> int:
         check("回归：旧 /api/credentials 410", code == 410, str(code))
 
         code, _, body = anon.req("POST", "/api/setup/complete",
-                                 body={"password": PASSWORD, "proof": "WRONG"})
-        check("初始化：错误 setup code 403", code == 403, str(code))
+                                 body={"password": "short"})
+        check("初始化：弱口令 400", code == 400, str(code))
         code, hdr, body = anon.req("POST", "/api/setup/complete",
-                                   body={"password": PASSWORD, "proof": SETUP_CODE})
+                                   body={"password": PASSWORD})
         d = json.loads(body)
-        check("初始化：正确 setup code 200 + 会话", code == 200 and d.get("ok"), str(code))
+        check("初始化：设置口令 200 + 会话", code == 200 and d.get("ok"), str(code))
         csrf = d.get("csrf") or ""
         check("会话：拿到 CSRF", bool(csrf))
 
@@ -203,7 +201,7 @@ def main() -> int:
         check("网络：初始化状态可读（无桌面机器靠它判断）",
               code == 200 and d.get("needs_setup") is False, str(code))
         code, _, _ = net.req("POST", "/api/setup/complete",
-                             body={"password": PASSWORD, "proof": "X"})
+                             body={"password": PASSWORD})
         check("网络：初始化完成后拒绝再次初始化", code == 409, str(code))
         code, hdr, body = net.req("POST", "/api/session/login", body={"password": PASSWORD})
         check("网络：HTTPS 登录 200", code == 200, str(code))
@@ -323,7 +321,7 @@ def main() -> int:
         state_b = tmp_b / "state"
         env_b = dict(env)
         env_b.update({"MOZU_CONFIG": str(cfg_b), "MOZU_STATE_DIR": str(state_b),
-                      "MOZU_SETUP_CODE": "BCODE", "MOZU_LAUNCH_TOKEN": "BLAUNCH",
+                      "MOZU_LAUNCH_TOKEN": "BLAUNCH",
                       "MOZU_ACTION_LOG": str(tmp_b / "actions.jsonl")})
         proc_b = subprocess.Popen([sys.executable, "-u", str(ROOT / "monitor_server.py")],
                                   cwd=str(ROOT), env=env_b,
@@ -342,7 +340,7 @@ def main() -> int:
 
         peer = Client(f"http://127.0.0.1:{B_HTTP}")
         code, _, _ = peer.req("POST", "/api/setup/complete",
-                              body={"password": PASSWORD, "proof": "BCODE"})
+                              body={"password": PASSWORD})
         check("节点：对端初始化", code == 200, str(code))
         btok = (state_b / "local-token").read_text(encoding="utf-8").strip()
         code, _, body = peer.req("POST", "/api/nodes/pair/start", body={},
