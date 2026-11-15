@@ -137,6 +137,7 @@ PEER_REVIVE_S = 300.0
 KEEPALIVE_DOWN_STREAK = 3
 KEEPALIVE_BACKOFF_S = (60.0, 120.0, 300.0)
 KEEPALIVE_MAX_FAILS = 5
+_FORWARDER_PROC = {"ssh", "ssh.exe", "sshd", "sshd.exe"}   # 中继隧道进程，不当作服务本体
 # 拉起命令执行完后仍要在对端多留一会儿。启动器多是 GUI/无控制台程序（wscript、start），
 # PowerShell 不会等它们跑完就返回，SSH 会话随即关闭并把它们回收 —— 表现出来就是
 # 「指令已下发，端口却始终没起来」。实测 wscript 走完 WMI Create 需要数秒。
@@ -201,7 +202,7 @@ SECURITY = SecurityState(
     login_max_failures=int(_SECURITY_CFG.get("login_max_failures", 5)),
     lockout_s=int(_SECURITY_CFG.get("lockout_s", 300)),
 )
-SERVER_VERSION = "Mozunitor/1.1.5"
+SERVER_VERSION = "Mozunitor/1.1.6"
 
 
 # 远端 Ollama 的模型状态：直接走 HTTP，不经 SSH。expires_at 是绝对时间戳、倒计时由前端算，
@@ -466,9 +467,13 @@ def probe_tcp(host: str, port: int, timeout: float = 2.5) -> tuple[bool, float]:
         return False, (time.perf_counter() - t0) * 1000
 
 
-def probe_http(url: str, ok_codes: list[int], timeout: float = 5.0) -> tuple[bool, float, str]:
+def probe_http(url: str, ok_codes: list[int], timeout: float = 5.0,
+               headers: dict | None = None) -> tuple[bool, float, str]:
     t0 = time.perf_counter()
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozunitor/1.0"})
+    hdrs = {"User-Agent": "Mozunitor/1.0"}
+    if headers:
+        hdrs.update({str(k): str(v) for k, v in headers.items()})
+    req = urllib.request.Request(url, headers=hdrs)
     try:
         with _OPENER.open(req, timeout=timeout) as r:
             code = r.status
@@ -891,7 +896,10 @@ def probe_one(svc: dict) -> None:
     sid = svc["id"]
 
     if kind == "http":
-        ok, ms, detail = probe_http(spec["url"], spec.get("ok", [200]))
+        # headers 用于中继探针：隧道转发到对端回环 listener 时必须带对端的 Host，
+        # 否则会被 Host 校验按 403 拒掉（relay-panel 曾因此长期假红）。
+        ok, ms, detail = probe_http(spec["url"], spec.get("ok", [200]),
+                                    headers=spec.get("headers"))
         STATE.record_probe(sid, "up" if ok else "down", ms, detail)
     elif kind == "tcp":
         ok, ms = probe_tcp(spec["host"], spec["port"])
@@ -1351,6 +1359,14 @@ def build_view() -> dict:
             pid = STATE.pid_of_name(where, pid_ref["process"], pid_ref.get("cmd"))
         else:
             pid = None
+        # 端口上的进程未必是服务本身：中继的 ssh -L 会长期占着服务要用的端口，
+        # 按端口取 pid 会把隧道进程当成服务（dsh 曾显示 pid=ssh、内存 11MB）。
+        if pid is not None:
+            info = STATE.proc_info(where, pid)
+            name = str(info.get("name") or "").lower()
+            want = str(pid_ref.get("process") or "").lower()
+            if name in _FORWARDER_PROC or (want and name != want):
+                pid = None
         rst = svc.get("restart") or {}
 
         item = {

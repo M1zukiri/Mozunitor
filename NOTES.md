@@ -2,9 +2,9 @@
 
 ## 当前状态（2026-11-15）
 
-- 版本 **1.1.5**（A=1 固定；A/B 只在用户要求升阶段时改，日常功能/修复走 C 位）。单 Windows 桌面应用。
+- 版本 **1.1.6**（A=1 固定；A/B 只在用户要求升阶段时改，日常功能/修复走 C 位）。单 Windows 桌面应用。
 - 开发分支 `refactor/security`；设计依据 `docs/SPEC.md`，硬约束 `AGENTS.md`，使用说明 `README.md`。
-- 生产实例：本机 `个人\Mozunitor-prod`、M1K `D:\Mozunitor-prod` 均已换 1.1.5 exe；节点互联双向在线。
+- 生产实例：本机 `个人\Mozunitor-prod`、M1K `D:\Mozunitor-prod` 均已换 1.1.6 exe；节点互联双向在线。
 
 ## 进度记录
 
@@ -246,3 +246,25 @@
   本机与 M1K 均已换成该版本，两端节点互认在线。
 - 旧 exe 备份在 `temp/deploy-backup/`（1.1.4 本机与 M1K 各一份，已 gitignore）。
 - Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.1.5（仅 exe）。
+
+### 2026-11-16 · 1.1.6 检查点：监控与控制审计
+
+- 全量核查本机 21 项服务 + 5 个中继：只读面板 54/54 可取数，只读脚本 5/5 可跑，
+  参数适配器 rag / sillytavern / ollama 读到真实值；节点双向在线。
+- 发现并修复：
+  - `m1k-hust` 保活风暴：看板取对端自评「up」而保活只看本机任务状态（任务跑完变 Ready 即判 down），
+    每 15 秒执行一次 `schtasks /run HUST-Auto-Login`，8 小时累计 3378 条动作。已在本机与 M1K 配置里
+    去掉该任务的 keepalive；修复后 0 新增动作。周期性任务本不该被「保活」。
+  - `dsh` 配置端口过期：probe/pid_ref/restart 仍写 19387，DSH Web 实际 11506（401 属正常）。
+    已改本机配置；同时按端口取 pid 时排除 ssh 转发进程，不再把中继隧道显示成服务本体。
+  - `relay-dsh` 链路断：本机 19387 → M1K 29387 → M1K 127.0.0.1:19387，而 M1K 只有 3081 在听。
+    已把 M1K 的 relay 监听目标改为 127.0.0.1:3081，中继恢复 200。
+  - `relay-panel` 假红：隧道正常，但探针打 `/api/node` 返回 403；改探 `/api/setup/status` 仍被 Host
+    校验拒（Host 是 127.0.0.1:18090）。probe 新增可选 `headers`，配置带 `Host: 127.0.0.1:8090` 后为 200。
+- 控制实测（用户授权，写操作均记动作日志）：tempokiri 启动 3.5s / 停止 5.3s 均成功；
+  sillytavern 重启 8.2s 拉起（HTTP 401 属正常）；flclash 重启 4.5s 恢复 7890，gemini 依赖随之恢复；
+  uu-local 重启服务成功但 `GameViewerServer` 进程仍未出现（UU 客户端未运行，属真红）。
+- 部署：1.1.6 exe 28,137,936 B，sha256 `4b522f18…df2caa`；本机改用 WMI 脱离 Job 启动
+  （此前从 shell 拉起会把面板放进带 KILL_ON_JOB_CLOSE 的 Job），M1K 用计划任务。双端 1.1.6，
+  节点在线；终态 20/21 在线（仅 uu-local 红），m1k-hust 无保活动作。
+- 配置改动备份在 `temp/audit/backups/`（本机与 M1K 各一份，已 gitignore）。

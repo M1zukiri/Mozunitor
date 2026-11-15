@@ -100,6 +100,7 @@
 启动迁移：只有 `listen.host/port` 的旧配置折算为 `listen.local`；`host` 非回环时迁移为网络模式并强制 HTTPS（启动时提示确认证书指纹）。旧 `.state/access-tokens.json`、`credentials.json` 不迁移，需重新初始化与配对。
 
 服务可选 `icon` 字段（`panel` / `llm` / `db` / `net` / `term` / `web` / `tool` / `generic`），缺省由前端按 id 与名称推断。
+`probe` 可选 `headers`（中继探针要带对端回环 listener 的 `Host`，否则会被 Host 校验按 403 拒掉）。
 
 ## 8. 不变量（回归门禁）
 
@@ -108,6 +109,7 @@
 - 网络入口必须显式开启且有 CIDR 白名单；Public 网络拒绝开启；非白名单来源 403。
 - 未配对节点/设备 401/403；设备或节点吊销后立即失效。
 - 被监控服务默认只读；写只经 `settings` 白名单，确认 + 审计。
+- 服务的 pid 不由转发进程冒充：按端口取 pid 时排除 `ssh/sshd`（中继隧道会长期占着服务端口）。
 - 既有功能（面板/详情/设置/ops/保活/中继）不回归；验收命令见 `AGENTS.md`。
 
 ## 9. 验收记录（1.1.x）
