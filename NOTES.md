@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-11-15）
 
-- 版本 **1.1.4**（A=1 固定；B 位随功能/修复升）。单 Windows 桌面应用，手机端源码与文档已移除。
+- 版本 **1.1.4**（A=1 固定；B 位随功能/修复升）。单 Windows 桌面应用。
 - 开发分支 `refactor/security`；设计依据 `docs/SPEC.md`，硬约束 `AGENTS.md`，使用说明 `README.md`。
 - 生产实例：本机 `个人\Mozunitor-prod`、M1K `D:\Mozunitor-prod`，均为 1.1.4；节点互联双向在线。
 
@@ -42,26 +42,14 @@
   write 权限），`/api/nodes*` 与配对接口上线；mesh 拉取/转发改走节点 token + 指纹钉住，未配对
   一律 401；设置页「安全」分节可配对节点/生成节点配对码/解除；节点令牌替换掉已失效的用户名+HMAC
   通道。自检：unit **139 项**、HTTP **50 项** 全 PASS（含双实例配对后 mesh 拉取、未配对 401）。
-  forwards 短 TTL ticket 仍待补；Android 客户端与 P6 未做。
-- P4 客户端（C 位 **1.0.6**）：Android 端改为「配对码 → 设备 token」——`mobile/lib/main.dart`
-  用 `dart:io` 的 `badCertificateCallback` 按 SHA256 指纹钉住自签证书，token 进
-  secure storage（Keystore 不可用时回退应用私有存储并提示）；设置页改为面板地址 + 证书指纹 +
-  配对码；清单数据优先用 Bearer token，失效时退回 `/api/session/login` 换会话（应用内 WebView
-  需要 Cookie）。`dart analyze` 无问题。
-- 构建阻塞：仓库路径含非 ASCII 时 AOT 阶段 `gen_snapshot` 读路径变乱码直接失败（AGENTS 记载的
-  已知坑，`android.overridePathCheck` 只绕过配置阶段）。把 `mobile/` 复制到纯 ASCII 临时目录后
-  AOT 能过，但本机 gradle `assembleRelease`/`assembleDebug` 长时间停滞（持续低 CPU、无产物）；
-  APK 构建与真机安装验证挪到 P6，换纯 ASCII 工作路径或干净构建环境再跑。
+  forwards 短 TTL ticket 仍待补。
 
 ### 2026-11-13 · P6（B 位 **1.1.0** 完成）
 
-- 版本升到 **1.1.0**（B 位）：`monitor_server`/`mozunitor.__version__`/手机端 pubspec 同步，
-  新增 `docs/SPEC.md`（架构与不变量）、`docs/MIGRATION-1.1.md`、工单归档
-  `docs/archive/SPEC-security-hardening.md`，README 更新为新认证模型。
+- 版本升到 **1.1.0**（B 位）：`monitor_server`/`mozunitor.__version__` 同步，
+  新增 `docs/SPEC.md`（架构与不变量）、`docs/MIGRATION-1.1.md`，README 更新为新认证模型。
 - 构建与验证：便携 exe（PyInstaller onefile，约 67 MB）在隔离目录启动通过（生成
-  services.json/.state/logs，回环 8090 `needs_setup=true`）；Android debug APK 真机验证通过
-  （配对 → 设备 token → 面板数据；吊销后 401）。release APK 需在纯 ASCII 路径构建，见下方已知限制。
-- 已知限制：APK release 构建依赖纯 ASCII 工作路径与干净 gradle 环境。
+  services.json/.state/logs，回环 8090 `needs_setup=true`）。
 
 ### 2026-11-13 · 1.1.1（forwards ticket 收尾）
 
@@ -75,9 +63,6 @@
   sha256 `15bd713e1b2fe84f043193264945b20bd2f2184a15dba7fb826a647985116f5c`
   （exe 体积因排除未用的 PyQt5/pygame/tkinter 等模块从 70 MB 降到 28 MB；隔离目录启动验证
   `version: Mozunitor/1.1.1`）。
-- `Mozunitor-1.1.1.apk` 51,393,858 B，
-  sha256 `9067caf0dc26530f14f512ac3a963b08e5a5856a685d695bd8460ce6c8af846a`
-  （versionName=1.1.1，真机安装通过）。
 - 产物在 `temp/release-1.1.1/`；GitHub Release 上传仍需仓库 token，留给用户完成。
 
 ### 2026-11-13 · M1K ↔ 本机节点互联实测（1.1.1）
@@ -97,13 +82,9 @@
   - `Mozunitor-1.1.0-portable.exe` 70,670,860 B，
     sha256 `d39d044c4428d91fa285a62ceffbf9f7f1478794b1cfeeed8e80c61feb0aee67`
     （隔离目录启动验证：version `Mozunitor/1.1.0`，回环 8090 `needs_setup=true`）。
-  - `Mozunitor-1.1.0.apk` 51,393,862 B，
-    sha256 `c9ffd7449364d7d877b356d2b631a99c556a0dd4dc62afa5fcc6fbf5e41a008f`
-    （versionName=1.1.0，真机安装启动通过）。
   - 产物在 `temp/release-1.1.0/`（不在版本库内）；GitHub Release 上传需要仓库凭据，
     本机未配置 token，留给用户在网页/`gh` 完成。
-- 构建注意：exe 直接用 PyInstaller 默认路径即可；APK release 必须纯 ASCII 工作路径，
-  先 `flutter pub get` 一次，之后用 `--no-pub` 避免反复联网解析。
+- 构建注意：exe 直接用 PyInstaller 默认路径即可。
 ### 2026-11-14 · 1.1.x 公开树补回 ops 工具链（exe 实测）
 
 - `app.py` 启动取端口改用 `monitor_server.LOCAL_PORT`：旧写法只认 `listen.port`，而设置页
@@ -156,7 +137,7 @@
   证书指纹 `9D:2F:42:03:E7:E1:14:70:B6:34:84:5F:1D:29:08:6D:03:3B:42:B7:81:CC:74:21:55:0D:23:BB:E5:10:4A:C9`，
   初始化口令待用户在浏览器完成。
 - 下一步：M1K 完成初始化 → 双向节点配对 → 停旧面板、换到 8090/8443、恢复 relay 监听、
-  配自启动；再重建 1.1.2 发布（APK 待手机恢复后补）。
+  配自启动；再重建 1.1.2 发布。
 ### 2026-11-15 · 1.1.2：节点指纹互钉 + 双机生产切换
 
 - 版本 1.1.2（B 位）：节点配对时双方都记录对端证书指纹 —— 此前只有发起方记录，
@@ -171,7 +152,7 @@
 - M1K 首启初始化待用户在浏览器完成（setup code `M1KSETUP`）；本机已完成。
 - 发布产物 `Mozunitor-1.1.2-portable.exe` 28,189,559 B，
   sha256 `422009f6870cdaf5c41f99825f62944fb2be4dc7455c0e3c37c4b9a936330bae`。
-- 待办：APK 1.1.2（手机端 ticket + 真机验证）、M1K 初始化口令、旧目录与备份任务收尾。
+- 待办：M1K 初始化口令、旧目录与备份任务收尾。
 ### 2026-11-15 · 1.1.3：无桌面机器允许从网络入口完成初始化
 
 - 问题：`/api/setup/status` 与 `/api/setup/complete` 原来限定 loopback，M1K 这类无桌面
@@ -181,13 +162,13 @@
   `complete_setup` 按来源地址限流（与登录同机制），网络入口下发的会话记为 network
   且 Cookie 带 Secure；初始化完成后重复调用仍返回 409。
 - 自测同步更新：core 全 PASS、http 全 PASS（新增「网络初始化状态可读 / 完成后拒绝再次初始化」）。
-- 1.1.2 发布资产不含此修复，留给 1.1.3 一起发（APK 仍待手机恢复）。
+- 1.1.2 发布资产不含此修复，留给 1.1.3 一起发。
 
 **1.1.3 发布产物**（2026-11-15）：
 - `Mozunitor-1.1.3-portable.exe` 28,189,892 B，
   sha256 `9d197cf95b45c07fab49ad359f1b1db3dfcf04743d2d4ad01296857d8e3e7504`；
   本机与 M1K 生产实例均已换成该版本。
-- Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.1.3（仅 exe，APK 待手机恢复）。
+- Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.1.3（仅 exe）。
 ### 2026-11-15 · 1.1.4：初始化只设管理员口令（移除 setup code）
 
 - 用户决定去掉一次性 setup code：初始化只凭管理员口令（≥8 位，两次输入一致），本机壳内
@@ -202,7 +183,7 @@
 - `Mozunitor-1.1.4-portable.exe` 28,220,223 B，
   sha256 `f78f5eee46c1044fcb2547ed8567d41b34f7e5ba81c0feaf5861e6d853a655f1`；
   本机与 M1K 均已换成该版本。
-- Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.1.4（仅 exe，APK 待手机恢复）。
+- Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.1.4（仅 exe）。
 - M1K 在 1.1.3 阶段已完成初始化（18:32:45，来源 100.85.213.22），1.1.4 升级后沿用该口令。
 ### 2026-11-15 · 结构与文档收敛
 
@@ -210,7 +191,7 @@
   旧存档树 2.8 GB（含 `.git` 与 v3.x tag）按用户授权删除。
 - 仓库移除 `mobile/` 与手机相关文档；删除构建/临时产物（`temp/`、`dist/`、`build/`、`logs/`、
   `.state/`、`__pycache__`、旧 `Mozunitor.spec`）与旧启动器（`start-monitor.bat`、
-  `start-monitor-hidden.vbs`）、旧界面截图；`.gitignore` 去掉 Flutter 段。
+  `start-monitor-hidden.vbs`）、旧界面截图；`.gitignore` 同步清理构建规则。
 - `tools/reload_panel.py` 改为优先拉起 `Mozunitor.exe`（源码安装退回 `app.py`）；`tools/update.py`
   去掉已删除启动器的保护项与 `deploy/` 跳过项。
 - 计划任务 `Mozunitor-Backup` 指向已删除的存档脚本，已删除该任务。
