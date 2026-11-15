@@ -4631,7 +4631,7 @@ def network_self_url() -> str:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Mozunitor/1.0.2"
+    server_version = SERVER_VERSION
     protocol_version = "HTTP/1.1"
     _session_cookie: str | None = None       # 本次响应要下发的会话 Cookie
 
