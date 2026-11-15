@@ -30,7 +30,7 @@
 
 | 产物 | 说明 |
 | --- | --- |
-| `Mozunitor-1.1.4-portable.exe` | Windows 便携版，双击运行，不写注册表、不需要安装 |
+| `Mozunitor-1.3.0-portable.exe` | Windows 便携版，双击运行，不写注册表、不需要安装 |
 
 > 便携版首次运行时会在 exe 旁边生成 `services.json`（来自 `services.example.json`）以及
 > `.state/`、`logs/`；首次打开 <http://127.0.0.1:8090/> 设置管理员口令即可完成初始化

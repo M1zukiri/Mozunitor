@@ -4,8 +4,7 @@
 
 - 版本 **1.3.0**（A=1 固定；B 位随功能/修复升）。单 Windows 桌面应用。
 - 开发分支 `refactor/security`；设计依据 `docs/SPEC.md`，硬约束 `AGENTS.md`，使用说明 `README.md`。
-- 生产实例：本机 `个人\Mozunitor-prod`、M1K `D:\Mozunitor-prod` 仍跑 1.1.4 exe；节点互联双向在线。
-  1.2.0–1.3.0 目前只存在于工作树，待重新构建 exe 后部署。
+- 生产实例：本机 `个人\Mozunitor-prod`、M1K `D:\Mozunitor-prod` 均已换 1.3.0 exe；节点互联双向在线。
 
 ## 进度记录
 
@@ -240,3 +239,10 @@
   页头瞳孔与壳底 ≥3:1。主题只存 `localStorage`，不写 `services.json`。
 - 验收：核心自测 147 项、HTTP 自测 55 项全 PASS；Playwright 主题 9 项 + 原前端 16 项断言全 PASS，
   1440×900 / 1280×720 无横向溢出。
+
+**1.3.0 发布产物**（2026-11-15）：
+- `Mozunitor-1.3.0-portable.exe` 28,139,565 B，
+  sha256 `4158de1bc2a62e19afa8bc02a85375120af0207cc63ced60c82a2f65f70a91e9`；
+  本机与 M1K 均已换成该版本（本机 19:40 部署，M1K 19:41 部署，两端节点互认在线）。
+- 旧 exe 备份在 `temp/deploy-backup/`（1.1.4 本机与 M1K 各一份，已 gitignore）。
+- Release: https://github.com/M1zukiri/Mozunitor/releases/tag/v1.3.0（仅 exe）。
