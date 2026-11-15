@@ -201,7 +201,7 @@ SECURITY = SecurityState(
     login_max_failures=int(_SECURITY_CFG.get("login_max_failures", 5)),
     lockout_s=int(_SECURITY_CFG.get("lockout_s", 300)),
 )
-SERVER_VERSION = "Mozunitor/1.1.1"
+SERVER_VERSION = "Mozunitor/1.1.2"
 
 
 # 远端 Ollama 的模型状态：直接走 HTTP，不经 SSH。expires_at 是绝对时间戳、倒计时由前端算，
@@ -4910,6 +4910,7 @@ class Handler(BaseHTTPRequestHandler):
                 url, code, node_id=NODE_ID, node_name=NODE_NAME,
                 self_url=network_self_url(),
                 fingerprint=str(payload.get("fingerprint") or ""),
+                own_fingerprint=TLS_FINGERPRINT,
                 client_ip=self._client_ip())
         except SecurityAuthError as exc:
             self._auth_error(exc)
@@ -4924,7 +4925,7 @@ class Handler(BaseHTTPRequestHandler):
                 str(payload.get("code") or ""), str(remote.get("id") or ""),
                 str(remote.get("name") or "节点"), str(payload.get("url") or ""),
                 str(payload.get("token") or ""), client_ip=self._client_ip(),
-                ua=self._ua())
+                fingerprint=str(payload.get("fingerprint") or ""), ua=self._ua())
         except SecurityAuthError as exc:
             self._auth_error(exc)
             return

@@ -435,10 +435,11 @@ class SecurityState:
 
     def pair_with_peer(self, url: str, code: str, *, node_id: str, node_name: str,
                        self_url: str, fingerprint: str = "",
-                       client_ip: str = "") -> tuple[dict, str]:
+                       own_fingerprint: str = "", client_ip: str = "") -> tuple[dict, str]:
         our_token = peer_nodes.new_token()
         body = {"code": code, "node": {"id": node_id, "name": node_name},
-                "url": self_url, "token": our_token}
+                "url": self_url, "token": our_token,
+                "fingerprint": own_fingerprint}
         try:
             status, payload, fp = peer_nodes.request(
                 url, "POST", "/api/nodes/pair/complete", body=body,
